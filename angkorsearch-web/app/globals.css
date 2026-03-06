@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Dark mode (default) ──────────────────── */
+:root, html, html.dark {
+  --color-primary: #0e1117;
+  --color-card:    #161b22;
+  --color-card2:   #1c2128;
+  --color-hover:   #21262d;
+  --color-border:  #30363d;
+  --color-text:    #e6edf3;
+  --color-muted:   #8b949e;
+  --color-blue:    #4285f4;
+  --color-green:   #3fb950;
+  --color-dim:     #444c56;
+}
+
+/* ── Light mode ───────────────────────────── */
+html.light {
+  --color-primary: #f6f8fa;
+  --color-card:    #ffffff;
+  --color-card2:   #f0f2f5;
+  --color-hover:   #e8eaed;
+  --color-border:  #d0d7de;
+  --color-text:    #1f2328;
+  --color-muted:   #636c76;
+  --color-dim:     #c6cdd5;
+}
+
+html {
+  scroll-behavior: smooth;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+body {
+  background: var(--color-primary);
+  color: var(--color-text);
+  font-family: 'Noto Sans', 'Noto Sans Khmer', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Khmer text font */
+.font-khmer, [lang="km"], *:lang(km) {
+  font-family: 'Noto Sans Khmer', 'Noto Sans', sans-serif;
+}
+
+/* Hide scrollbar for tab overflow */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Snippet highlights respond to theme */
+html.dark  b { color: #e6edf3; font-weight: 600; }
+html.light b { color: #1f2328; font-weight: 600; }
+
+/* Masonry fallback */
+@supports not (columns: 3) {
+  .masonry-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+}
+
+/* Selection */
+::selection { background: rgba(66, 133, 244, 0.25); color: var(--color-text); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--color-card); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-dim); }

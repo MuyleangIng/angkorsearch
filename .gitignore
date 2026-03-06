@@ -15,11 +15,14 @@ api/api_server
 *.o
 *.out
 
-# Next.js
-frontend/.next/
-frontend/node_modules/
-frontend/.env.local
-frontend/out/
+# Old frontend (removed)
+frontend/
+
+# angkorsearch-web (Next.js 14 TypeScript)
+angkorsearch-web/.next/
+angkorsearch-web/node_modules/
+angkorsearch-web/.env.local
+angkorsearch-web/out/
 
 # Environment / secrets
 .env

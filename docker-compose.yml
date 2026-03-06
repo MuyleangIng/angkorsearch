@@ -1,8 +1,9 @@
-
 # ============================================================
-#  AngkorSearch v2 — Full Docker Compose
-#  Services: postgres, redis, crawler, api, frontend, nginx
-#  Data stored in ./storage/ — never lost!
+#  AngkorSearch v2.2 — Docker Compose
+#  New in v2.2:
+#   • ollama service  — local LLM (qwen2.5:3b by default)
+#   • ollama-init     — auto-pulls the model on first run
+#   • storage/ollama  — persists model weights
 # ============================================================
 
 networks:
@@ -12,7 +13,7 @@ networks:
 services:
 
   # ─────────────────────────────────────────
-  # PostgreSQL — main database
+  # PostgreSQL
   # ─────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
@@ -23,7 +24,7 @@ services:
       POSTGRES_USER:     angkor
       POSTGRES_PASSWORD: angkor_secret_2024
     volumes:
-      - ./storage/postgres:/var/lib/postgresql/data   # permanent storage
+      - ./storage/postgres:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
       - "5432:5432"
@@ -36,7 +37,7 @@ services:
       retries: 5
 
   # ─────────────────────────────────────────
-  # Redis — caching + sessions
+  # Redis
   # ─────────────────────────────────────────
   redis:
     image: redis:7-alpine
@@ -44,7 +45,7 @@ services:
     restart: unless-stopped
     command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
-      - ./storage/redis:/data                          # permanent storage
+      - ./storage/redis:/data
     ports:
       - "6379:6379"
     networks:
@@ -56,14 +57,59 @@ services:
       retries: 5
 
   # ─────────────────────────────────────────
-  # Crawler — C++ mega crawler
-  # Crawls: web, news, images, videos, GitHub
+  # Ollama — local LLM server
+  # Default model: qwen2.5:3b (~2GB, multilingual, supports Khmer)
+  # To use GPU: uncomment the deploy section below
   # ─────────────────────────────────────────
-  crawler:
+  ollama:
+    image: ollama/ollama
+    container_name: angkor_ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./storage/ollama:/root/.ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: "24h"
+    networks:
+      - angkor_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    # Uncomment to enable NVIDIA GPU acceleration:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # Auto-pulls the LLM model when Ollama first starts
+  ollama-init:
+    image: ollama/ollama
+    container_name: angkor_ollama_init
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c", "ollama pull qwen2.5:3b && echo 'Model ready!'"]
+    networks:
+      - angkor_net
+
+  # ─────────────────────────────────────────
+  # Crawler Node 1 — seeds queue + crawls
+  # ─────────────────────────────────────────
+  crawler_1:
     build:
       context: ./crawler
       dockerfile: Dockerfile
-    container_name: angkor_crawler
+    container_name: angkor_crawler_1
     restart: unless-stopped
     environment:
       DB_HOST:      postgres
@@ -73,12 +119,13 @@ services:
       DB_PASS:      angkor_secret_2024
       REDIS_HOST:   redis
       REDIS_PORT:   6379
-      MAX_PAGES:    500000
-      CRAWL_DELAY:  800
-      # Optional: add your GitHub token for 5000 req/hour instead of 60
+      MAX_PAGES:    5000
+      CRAWL_DELAY:  200
+      N_THREADS:    8
+      NODE_ID:      "1"
       GITHUB_TOKEN: ""
     volumes:
-      - ./storage/html:/app/data/html                  # permanent HTML storage
+      - ./storage/html:/app/data/html
       - ./data/dict:/app/data/dict
     depends_on:
       postgres:
@@ -89,7 +136,106 @@ services:
       - angkor_net
 
   # ─────────────────────────────────────────
-  # API — C++ HTTP search API
+  # Crawler Node 2
+  # ─────────────────────────────────────────
+  crawler_2:
+    build:
+      context: ./crawler
+      dockerfile: Dockerfile
+    container_name: angkor_crawler_2
+    restart: unless-stopped
+    environment:
+      DB_HOST:      postgres
+      DB_PORT:      5432
+      DB_NAME:      angkorsearch
+      DB_USER:      angkor
+      DB_PASS:      angkor_secret_2024
+      REDIS_HOST:   redis
+      REDIS_PORT:   6379
+      MAX_PAGES:    5000
+      CRAWL_DELAY:  200
+      N_THREADS:    8
+      NODE_ID:      "2"
+      GITHUB_TOKEN: ""
+    volumes:
+      - ./storage/html:/app/data/html
+      - ./data/dict:/app/data/dict
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - angkor_net
+
+  # ─────────────────────────────────────────
+  # Crawler Node 3
+  # ─────────────────────────────────────────
+  crawler_3:
+    build:
+      context: ./crawler
+      dockerfile: Dockerfile
+    container_name: angkor_crawler_3
+    restart: unless-stopped
+    environment:
+      DB_HOST:      postgres
+      DB_PORT:      5432
+      DB_NAME:      angkorsearch
+      DB_USER:      angkor
+      DB_PASS:      angkor_secret_2024
+      REDIS_HOST:   redis
+      REDIS_PORT:   6379
+      MAX_PAGES:    5000
+      CRAWL_DELAY:  200
+      N_THREADS:    8
+      NODE_ID:      "3"
+      GITHUB_TOKEN: ""
+    volumes:
+      - ./storage/html:/app/data/html
+      - ./data/dict:/app/data/dict
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - angkor_net
+
+  # ─────────────────────────────────────────
+  # Crawler Node 4
+  # ─────────────────────────────────────────
+  crawler_4:
+    build:
+      context: ./crawler
+      dockerfile: Dockerfile
+    container_name: angkor_crawler_4
+    restart: unless-stopped
+    environment:
+      DB_HOST:      postgres
+      DB_PORT:      5432
+      DB_NAME:      angkorsearch
+      DB_USER:      angkor
+      DB_PASS:      angkor_secret_2024
+      REDIS_HOST:   redis
+      REDIS_PORT:   6379
+      MAX_PAGES:    5000
+      CRAWL_DELAY:  200
+      N_THREADS:    8
+      NODE_ID:      "4"
+      GITHUB_TOKEN: ""
+    volumes:
+      - ./storage/html:/app/data/html
+      - ./data/dict:/app/data/dict
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - angkor_net
+
+  # ─────────────────────────────────────────
+  # API — C++ HTTP server
   # ─────────────────────────────────────────
   api:
     build:
@@ -98,16 +244,18 @@ services:
     container_name: angkor_api
     restart: unless-stopped
     environment:
-      DB_HOST:    postgres
-      DB_PORT:    5432
-      DB_NAME:    angkorsearch
-      DB_USER:    angkor
-      DB_PASS:    angkor_secret_2024
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      API_PORT:   8080
+      DB_HOST:       postgres
+      DB_PORT:       5432
+      DB_NAME:       angkorsearch
+      DB_USER:       angkor
+      DB_PASS:       angkor_secret_2024
+      REDIS_HOST:    redis
+      REDIS_PORT:    6379
+      API_PORT:      8080
+      OLLAMA_HOST:   http://ollama:11434
+      OLLAMA_MODEL:  qwen2.5:3b
     volumes:
-      - ./storage/index:/app/data/index                # permanent index storage
+      - ./storage/index:/app/data/index
       - ./data/dict:/app/data/dict
     ports:
       - "8080:8080"
@@ -125,18 +273,21 @@ services:
       retries: 5
 
   # ─────────────────────────────────────────
-  # Frontend — Next.js UI
+  # Frontend — Next.js 14 TypeScript
   # ─────────────────────────────────────────
   frontend:
     build:
-      context: ./frontend
+      context: ./angkorsearch-web
       dockerfile: Dockerfile
     container_name: angkor_frontend
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8080
+      NEXT_PUBLIC_API_URL: http://api:8080
+    ports:
+      - "3000:3000"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     networks:
       - angkor_net
 
