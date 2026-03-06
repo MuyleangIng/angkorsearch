@@ -1,0 +1,166 @@
+
+# ============================================================
+#  AngkorSearch — Full Stack Docker Compose
+#  Services:
+#    postgres  → stores pages, URLs, users, history
+#    redis     → caching hot queries, sessions
+#    crawler   → C++ crawler fetching Cambodian pages
+#    api       → C++ search API (HTTP server)
+#    frontend  → Next.js web UI
+#    nginx     → reverse proxy + load balancer
+# ============================================================
+
+networks:
+  angkor_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  html_store:       # raw HTML files
+  index_store:      # C++ index binary files
+
+services:
+
+  # ─────────────────────────────────────────
+  # PostgreSQL — main database
+  # ─────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: angkor_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       angkorsearch
+      POSTGRES_USER:     angkor
+      POSTGRES_PASSWORD: angkor_secret_2024
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - angkor_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U angkor -d angkorsearch"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # Redis — caching + sessions
+  # ─────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: angkor_redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - angkor_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # Crawler — C++ web crawler
+  # ─────────────────────────────────────────
+  crawler:
+    build:
+      context: ./crawler
+      dockerfile: Dockerfile
+    container_name: angkor_crawler
+    restart: unless-stopped
+    environment:
+      DB_HOST:     postgres
+      DB_PORT:     5432
+      DB_NAME:     angkorsearch
+      DB_USER:     angkor
+      DB_PASS:     angkor_secret_2024
+      REDIS_HOST:  redis
+      REDIS_PORT:  6379
+      MAX_PAGES:   100000
+      CRAWL_DELAY: 1000   # ms between requests
+    volumes:
+      - html_store:/app/data/html
+      - ./data/dict:/app/data/dict
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - angkor_net
+
+  # ─────────────────────────────────────────
+  # API — C++ search API server
+  # ─────────────────────────────────────────
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: angkor_api
+    restart: unless-stopped
+    environment:
+      DB_HOST:    postgres
+      DB_PORT:    5432
+      DB_NAME:    angkorsearch
+      DB_USER:    angkor
+      DB_PASS:    angkor_secret_2024
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      API_PORT:   8080
+    volumes:
+      - index_store:/app/data/index
+      - ./data/dict:/app/data/dict
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - angkor_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # Frontend — Next.js
+  # ─────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: angkor_frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://nginx/api
+    depends_on:
+      - api
+    networks:
+      - angkor_net
+
+  # ─────────────────────────────────────────
+  # Nginx — reverse proxy
+  # ─────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: angkor_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - api
+      - frontend
+    networks:
+      - angkor_net
