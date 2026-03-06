@@ -15,14 +15,17 @@ import { useSearch } from '@/hooks/useSearch'
 import { useBookmark } from '@/hooks/useBookmark'
 import type { TabId } from '@/types'
 
+import type { SearchResult } from '@/types'
+
 interface Props {
-  query: string
-  tab:   TabId
-  page:  number
-  lang:  string
+  query:      string
+  tab:        TabId
+  page:       number
+  lang:       string
+  onResults?: (results: SearchResult[]) => void
 }
 
-export default function SearchResults({ query, tab, page, lang }: Props) {
+export default function SearchResults({ query, tab, page, lang, onResults }: Props) {
   const router = useRouter()
   const { results, loading, error, aiAnswer, aiModel, aiLoading, search } = useSearch()
   const { save, bookmarks, history, loadBookmarks, loadHistory, deleteHistory } = useBookmark()
@@ -33,6 +36,10 @@ export default function SearchResults({ query, tab, page, lang }: Props) {
     if (tab === 'history')   { loadHistory();   return }
     search(query, tab, page, lang)
   }, [query, tab, page, lang])
+
+  useEffect(() => {
+    if (!loading && results.length > 0) onResults?.(results)
+  }, [results, loading])
 
   function goPage(p: number) {
     router.push(`/search?q=${encodeURIComponent(query)}&tab=${tab}&page=${p}&lang=${lang}`)
@@ -99,10 +106,34 @@ export default function SearchResults({ query, tab, page, lang }: Props) {
 
   // ── No results ──
   if (!results.length) return (
-    <div className="py-16 text-center space-y-2">
-      <div className="text-5xl mb-4">😔</div>
-      <p className="text-content text-lg">No results for &ldquo;<strong className="font-khmer">{query}</strong>&rdquo;</p>
-      <p className="text-muted text-sm">Try different keywords. The crawler may still be indexing pages.</p>
+    <div className="py-14 max-w-lg">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-10 h-10 rounded-full bg-card2 border border-border flex items-center justify-center flex-shrink-0">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-muted">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M11 16h.01" strokeLinecap="round"/>
+          </svg>
+        </div>
+        <div>
+          <p className="text-content text-base font-semibold font-khmer">
+            No results for &ldquo;{query}&rdquo;
+          </p>
+          <p className="text-muted text-sm mt-0.5">The crawler is still building the index</p>
+        </div>
+      </div>
+      <div className="bg-card border border-border rounded-xl p-4 space-y-3 text-sm text-muted">
+        <p className="flex items-start gap-2">
+          <span className="text-yellow mt-0.5">⚡</span>
+          <span>Our crawler is actively indexing pages. Results for this query may appear within minutes as new pages are discovered.</span>
+        </p>
+        <p className="flex items-start gap-2">
+          <span className="text-blue mt-0.5">💡</span>
+          <span>Try shorter keywords, English terms, or check the <strong className="text-content">News</strong> or <strong className="text-content">Dev</strong> tabs above.</span>
+        </p>
+        <p className="flex items-start gap-2">
+          <span className="text-green mt-0.5">🌱</span>
+          <span>You can add new seed domains in the <a href="/admin" className="text-blue hover:underline">Admin panel</a> to help the crawler discover more content.</span>
+        </p>
+      </div>
     </div>
   )
 
@@ -161,11 +192,11 @@ export default function SearchResults({ query, tab, page, lang }: Props) {
     )
   }
 
-  // ── GitHub ──
+  // ── Dev & Tech ──
   if (tab === 'github') {
     return (
       <div className="space-y-3">
-        <p className="text-muted text-xs mb-4">{results.length.toLocaleString()} repositories</p>
+        <p className="text-muted text-xs mb-4">{results.length.toLocaleString()} dev & tech resources</p>
         {results.map((r, i) => <GithubResult key={r.id ?? i} result={r} index={i} onBookmark={save} />)}
         <Pagination page={page} hasMore={results.length === 10} onPage={goPage} />
       </div>
