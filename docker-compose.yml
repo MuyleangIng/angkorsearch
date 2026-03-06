@@ -1,24 +1,13 @@
 
 # ============================================================
-#  AngkorSearch — Full Stack Docker Compose
-#  Services:
-#    postgres  → stores pages, URLs, users, history
-#    redis     → caching hot queries, sessions
-#    crawler   → C++ crawler fetching Cambodian pages
-#    api       → C++ search API (HTTP server)
-#    frontend  → Next.js web UI
-#    nginx     → reverse proxy + load balancer
+#  AngkorSearch v2 — Full Docker Compose
+#  Services: postgres, redis, crawler, api, frontend, nginx
+#  Data stored in ./storage/ — never lost!
 # ============================================================
 
 networks:
   angkor_net:
     driver: bridge
-
-volumes:
-  postgres_data:
-  redis_data:
-  html_store:       # raw HTML files
-  index_store:      # C++ index binary files
 
 services:
 
@@ -34,7 +23,7 @@ services:
       POSTGRES_USER:     angkor
       POSTGRES_PASSWORD: angkor_secret_2024
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./storage/postgres:/var/lib/postgresql/data   # permanent storage
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
       - "5432:5432"
@@ -55,7 +44,7 @@ services:
     restart: unless-stopped
     command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
-      - redis_data:/data
+      - ./storage/redis:/data                          # permanent storage
     ports:
       - "6379:6379"
     networks:
@@ -67,7 +56,8 @@ services:
       retries: 5
 
   # ─────────────────────────────────────────
-  # Crawler — C++ web crawler
+  # Crawler — C++ mega crawler
+  # Crawls: web, news, images, videos, GitHub
   # ─────────────────────────────────────────
   crawler:
     build:
@@ -76,17 +66,19 @@ services:
     container_name: angkor_crawler
     restart: unless-stopped
     environment:
-      DB_HOST:     postgres
-      DB_PORT:     5432
-      DB_NAME:     angkorsearch
-      DB_USER:     angkor
-      DB_PASS:     angkor_secret_2024
-      REDIS_HOST:  redis
-      REDIS_PORT:  6379
-      MAX_PAGES:   100000
-      CRAWL_DELAY: 1000   # ms between requests
+      DB_HOST:      postgres
+      DB_PORT:      5432
+      DB_NAME:      angkorsearch
+      DB_USER:      angkor
+      DB_PASS:      angkor_secret_2024
+      REDIS_HOST:   redis
+      REDIS_PORT:   6379
+      MAX_PAGES:    500000
+      CRAWL_DELAY:  800
+      # Optional: add your GitHub token for 5000 req/hour instead of 60
+      GITHUB_TOKEN: ""
     volumes:
-      - html_store:/app/data/html
+      - ./storage/html:/app/data/html                  # permanent HTML storage
       - ./data/dict:/app/data/dict
     depends_on:
       postgres:
@@ -97,7 +89,7 @@ services:
       - angkor_net
 
   # ─────────────────────────────────────────
-  # API — C++ search API server
+  # API — C++ HTTP search API
   # ─────────────────────────────────────────
   api:
     build:
@@ -115,7 +107,7 @@ services:
       REDIS_PORT: 6379
       API_PORT:   8080
     volumes:
-      - index_store:/app/data/index
+      - ./storage/index:/app/data/index                # permanent index storage
       - ./data/dict:/app/data/dict
     ports:
       - "8080:8080"
@@ -133,7 +125,7 @@ services:
       retries: 5
 
   # ─────────────────────────────────────────
-  # Frontend — Next.js
+  # Frontend — Next.js UI
   # ─────────────────────────────────────────
   frontend:
     build:
@@ -142,7 +134,7 @@ services:
     container_name: angkor_frontend
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_URL: http://nginx/api
+      NEXT_PUBLIC_API_URL: http://localhost:8080
     depends_on:
       - api
     networks:

@@ -1,0 +1,57 @@
+# ─────────────────────────────────────────
+# AngkorSearch — .gitignore
+# ─────────────────────────────────────────
+
+# Docker / Storage (never commit data!)
+storage/
+storage/postgres/
+storage/redis/
+storage/html/
+storage/index/
+
+# Compiled C++ binaries
+crawler/crawler
+api/api_server
+*.o
+*.out
+
+# Next.js
+frontend/.next/
+frontend/node_modules/
+frontend/.env.local
+frontend/out/
+
+# Environment / secrets
+.env
+.env.*
+*.env
+
+# Database backups
+*.sql.bak
+backups/
+
+# Raw HTML crawled files
+data/html/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# JetBrains / CLion
+.idea/
+*.iml
+cmake-build-*/
+
+# Logs
+*.log
+logs/
+
+# Temp files
+*.tmp
+*.swp
+*~

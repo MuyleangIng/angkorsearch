@@ -1,30 +1,15 @@
 #!/bin/bash
-# ============================================================
-#  AngkorSearch — Start Everything
-#  Usage: ./start.sh
-# ============================================================
-
-echo "🇰🇭 Starting AngkorSearch..."
-
-# Create required local folders
-mkdir -p data/html data/dict
-
-# Copy Khmer dictionary
-cp -n ../data/khmer_dict.txt data/dict/khmer_dict.txt 2>/dev/null || true
-
-# Start all services
+echo "🇰🇭 Starting AngkorSearch v2..."
+mkdir -p storage/postgres storage/redis storage/html storage/index data/dict
+docker compose down
 docker compose up -d --build
-
 echo ""
-echo "✅ AngkorSearch is starting!"
+echo "✅ All services starting!"
+echo "  🌐 Website : http://localhost"
+echo "  🔌 API     : http://localhost:8080"
+echo "  📊 Stats   : http://localhost:8080/stats"
+echo "  🗄️  DB      : localhost:5432"
 echo ""
-echo "  🌐 Website:    http://localhost"
-echo "  🔌 API:        http://localhost:8080"
-echo "  🗄️  Database:   localhost:5432"
-echo "  ⚡ Redis:      localhost:6379"
-echo ""
-echo "Watch logs:"
-echo "  docker compose logs -f"
-echo ""
-echo "Stop everything:"
-echo "  docker compose down"
+echo "Watch crawler: docker compose logs -f crawler"
+echo "Watch all:     docker compose logs -f"
+echo "Stop:          docker compose down"
