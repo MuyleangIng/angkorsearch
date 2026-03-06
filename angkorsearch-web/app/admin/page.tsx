@@ -260,7 +260,7 @@ export default function AdminPage() {
     <div className="min-h-screen bg-primary text-content">
 
       {/* ── Header ── */}
-      <header className="bg-card border-b border-border px-6 py-3 flex items-center justify-between sticky top-0 z-40">
+      <header className="bg-card border-b border-border px-4 sm:px-6 py-3 flex items-center justify-between sticky top-0 z-40">
         <div className="flex items-center gap-4">
           <Link href="/" className="opacity-70 hover:opacity-100 transition-opacity">
             <img src="/logo.png" alt="AngkorSearch" className="h-8 w-auto" />
@@ -282,14 +282,14 @@ export default function AdminPage() {
             </svg>
             Refresh
           </button>
-          <Link href="/search?q=Cambodia&tab=all&page=1" className="text-xs bg-blue text-white px-3 py-1.5 rounded-full hover:bg-blue/80 transition-all">
+          <Link href="/search?q=Cambodia&tab=all&page=1" className="text-xs bg-blue text-white px-3 py-1.5 rounded-full hover:bg-blue/80 transition-all hidden sm:inline-flex">
             Open Search
           </Link>
         </div>
       </header>
 
       {/* ── Tabs ── */}
-      <div className="border-b border-border bg-card px-6">
+      <div className="border-b border-border bg-card px-4 sm:px-6">
         <div className="flex gap-0 overflow-x-auto scrollbar-hide">
           {([
             ['overview', 'Overview'],
@@ -316,7 +316,7 @@ export default function AdminPage() {
         </div>
       </div>
 
-      <main className="px-6 py-6 max-w-7xl mx-auto space-y-6">
+      <main className="px-4 sm:px-6 py-6 max-w-7xl mx-auto space-y-6">
 
         {loading && tab !== 'system' && (
           <div className="flex items-center justify-center py-24">
@@ -346,7 +346,7 @@ export default function AdminPage() {
               </div>
             </section>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {/* Top domains */}
               <section className="bg-card border border-border rounded-xl p-5">
                 <h3 className="text-sm font-semibold text-content mb-3 flex items-center gap-2">
@@ -589,7 +589,7 @@ export default function AdminPage() {
         {/* ════════════════ QUEUE TAB ════════════════ */}
         {!loading && tab === 'queue' && (
           <>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <StatCard label="Pending"   value={ov?.queue_pending ?? 0} color="text-yellow" sub="waiting to crawl" />
               <StatCard label="Completed" value={ov?.queue_done    ?? 0} color="text-green"  sub="indexed" />
               <StatCard label="Total"     value={ov?.queue_total   ?? 0} color="text-content" sub="in queue" />
@@ -602,7 +602,7 @@ export default function AdminPage() {
                 Unlike seeds, this is a one-time crawl — the URL is not re-crawled automatically.
               </p>
               <form onSubmit={handleAddQueue} className="flex flex-wrap gap-3 items-end">
-                <div className="flex-1 min-w-[300px]">
+                <div className="flex-1 min-w-[200px]">
                   <label className="text-xs text-muted block mb-1">URL to crawl</label>
                   <input value={qUrl} onChange={e => setQUrl(e.target.value)}
                     placeholder="https://example.com/specific-page"

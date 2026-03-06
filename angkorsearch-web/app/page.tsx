@@ -42,7 +42,7 @@ export default function HomePage() {
             <button
               key={chip}
               onClick={() => handleSearch(chip)}
-              className="px-3 py-1.5 rounded-full bg-card border border-border text-muted text-xs hover:text-text hover:border-blue/40 transition-all hover:bg-card2 font-khmer"
+              className="px-3 py-1.5 rounded-full bg-card border border-border text-muted text-xs hover:text-content hover:border-blue/40 transition-all hover:bg-card2 font-khmer"
             >
               {chip}
             </button>
@@ -66,9 +66,15 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="border-t border-border py-4 mt-auto">
         <div className="max-w-5xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-muted">
-          <span>Cambodia&apos;s open search engine</span>
+          <span className="flex flex-wrap items-center justify-center sm:justify-start gap-1">
+            Cambodia&apos;s open search engine · Made with <span className="text-red">♥</span> by
+            <a href="https://muyleanging.com" target="_blank" rel="noreferrer" className="text-blue hover:underline ml-0.5">Ing Muyleang</a>
+            <span className="mx-1 text-border">|</span>
+            <a href="https://khmerstack.muyleanging.com" target="_blank" rel="noreferrer" className="text-blue hover:underline">KhmerStack</a>
+          </span>
           <div className="flex items-center gap-4">
             <ThemeToggle />
+            <a href="/about" className="hover:text-content transition-colors">About</a>
             <a href="/admin" className="hover:text-content transition-colors">Admin</a>
           </div>
         </div>

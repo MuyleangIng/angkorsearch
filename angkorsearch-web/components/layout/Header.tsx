@@ -37,19 +37,22 @@ export default function Header({ query, tab, lang, onLang }: Props) {
           />
         </div>
 
-        {/* Admin link */}
-        <div className="hidden md:flex items-center gap-2 ml-auto flex-shrink-0">
+        {/* Right controls */}
+        <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
+          {/* Lang select — hidden on mobile */}
           <select
             value={lang}
             onChange={e => onLang(e.target.value)}
-            className="bg-card2 border border-border text-muted text-xs rounded-full px-3 py-1.5 focus:outline-none focus:border-blue"
+            className="hidden sm:block bg-card2 border border-border text-muted text-xs rounded-full px-3 py-1.5 focus:outline-none focus:border-blue"
           >
             <option value="">All</option>
             <option value="km">🇰🇭 ខ្មែរ</option>
             <option value="en">🇬🇧 English</option>
           </select>
+          {/* Theme toggle — always visible */}
           <ThemeToggle />
-          <Link href="/admin" className="text-xs text-muted hover:text-content transition-colors px-3 py-1.5 rounded-full hover:bg-hover">
+          {/* Admin link — hidden on mobile */}
+          <Link href="/admin" className="hidden md:inline-flex text-xs text-muted hover:text-content transition-colors px-3 py-1.5 rounded-full hover:bg-hover">
             Admin
           </Link>
         </div>

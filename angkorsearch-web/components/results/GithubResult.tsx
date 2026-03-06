@@ -158,8 +158,8 @@ export default function GithubResult({ result, index, onBookmark }: Props) {
               </>
             )}
             {result.owner && <span className="truncate">by {result.owner}</span>}
-            {!isRepo && result.published_at && (
-              <span>{new Date(result.published_at).toLocaleDateString()}</span>
+            {!isRepo && result.published && (
+              <span>{new Date(result.published).toLocaleDateString()}</span>
             )}
           </div>
         </div>
