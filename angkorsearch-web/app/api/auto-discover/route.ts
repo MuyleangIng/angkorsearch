@@ -104,10 +104,21 @@ function guessUrls(query: string): string[] {
   add(`https://${slug}.pages.dev`)
   add(`https://${dash}.pages.dev`)
 
-  // ── 8. YouTube channel handle (fetch profile page) ───────────────────────
-  // (crawl-now will fetch it; bots can see public channel pages)
+  // ── 8. YouTube channel handle ─────────────────────────────────────────────
   add(`https://www.youtube.com/@${slug}`)
   add(`https://www.youtube.com/@${dash}`)
+
+  // ── 9. Twitter / X public profiles ───────────────────────────────────────
+  for (const h of [slug, dash, first]) {
+    add(`https://twitter.com/${h}`)
+    add(`https://x.com/${h}`)
+  }
+
+  // ── 10. Dev.to / Hashnode / Substack ─────────────────────────────────────
+  for (const h of [slug, dash]) {
+    add(`https://dev.to/${h}`)
+    add(`https://${h}.substack.com`)
+  }
 
   return urls
 }

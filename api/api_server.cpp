@@ -389,11 +389,12 @@ public:
     //  6. Ranking boost — URL match, title match, trigram score, FTS rank combined
     Res search(const Req& req) {
         std::string q=param(req,"q"), type=param(req,"type","web"), lang=param(req,"lang");
+        std::string dateFrom=param(req,"date_from"); // optional ISO date: "2024-01-01"
         int page=std::stoi(param(req,"page","1")), limit=10, offset=(page-1)*limit;
         if(q.empty()) return {400,R"({"error":"missing q"})"};
 
         auto* r=rc();
-        std::string ck="s:"+q+":"+type+":"+lang+":"+std::to_string(page);
+        std::string ck="s:"+q+":"+type+":"+lang+":"+dateFrom+":"+std::to_string(page);
         std::string cached=cacheGet(r,ck);
         if(!cached.empty()){redisFree(r);return{200,cached};}
 
@@ -473,13 +474,15 @@ public:
             json+="],\"count\":"+std::to_string(rows)+"}";
 
         } else if(type=="news") {
-            std::vector<std::string> pv={q,likeW,std::to_string(limit),std::to_string(offset)};
+            // $5=lang ('' = all), $6=date_from ('' = no filter)
+            std::vector<std::string> pv={q,likeW,std::to_string(limit),std::to_string(offset),lang,dateFrom};
             std::string sql=
                 "SELECT url,title,description,image_url,source,published_at FROM news "
                 "WHERE (to_tsvector('simple',coalesce(title,'')||' '||coalesce(description,'')) @@ plainto_tsquery('simple',$1) "
-                "  OR title ILIKE $2 OR description ILIKE $2) ";
-            if(!lang.empty()){sql+="AND language=$5 ";pv.push_back(lang);}
-            sql+="ORDER BY published_at DESC NULLS LAST LIMIT $3::int OFFSET $4::int";
+                "  OR title ILIKE $2 OR description ILIKE $2) "
+                "AND ($5 = '' OR language = $5) "
+                "AND ($6 = '' OR crawled_at >= $6::date) "
+                "ORDER BY published_at DESC NULLS LAST LIMIT $3::int OFFSET $4::int";
             std::vector<const char*> pp; for(auto& s:pv) pp.push_back(s.c_str());
             res=PQexecParams(d,sql.c_str(),(int)pp.size(),nullptr,pp.data(),nullptr,nullptr,0);
             json="{\"type\":\"news\",\"results\":[";
@@ -492,8 +495,10 @@ public:
             // Params: $1=q  $2=likeW(firstWord)  $3=limit  $4=offset
             //         $5=likeP(prefix)  $6=likeS(suffix)  $7=likeW2(word2)
             //         $8=likeQ(fullQuery)  [$9=lang if set]
+            // $1=q  $2=likeW  $3=limit  $4=offset  $5=likeP  $6=likeS  $7=likeW2  $8=likeQ
+            // $9=lang ('' = all)  $10=date_from ('' = no filter)
             std::vector<std::string> pv={q,likeW,std::to_string(limit),std::to_string(offset),
-                                          likeP,likeS,likeW2,likeQ};
+                                          likeP,likeS,likeW2,likeQ,lang,dateFrom};
             std::string sql=
                 "SELECT id,url,title,description,"
                 "ts_headline('simple',coalesce(content,''),plainto_tsquery('simple',$1),"
@@ -537,25 +542,33 @@ public:
                 " OR description ILIKE $2 OR description ILIKE $5"
                 // 7. Second word in multi-word queries
                 " OR title       ILIKE $7 OR description ILIKE $7"
-                // 8. Content substring (most expensive, but covers body text)
-                " OR content     ILIKE $8 OR content     ILIKE $2"
-                // 9. Domain name search
+                // 8. Domain name search
                 " OR domain      ILIKE $2"
-                ") ";
-            if(!lang.empty()){sql+="AND language=$9 ";pv.push_back(lang);}
+                ") "
+            "AND ($9 = '' OR language = $9) "
+            "AND ($10 = '' OR updated_at >= $10::date) ";
             sql+="ORDER BY rank DESC NULLS LAST, updated_at DESC LIMIT $3::int OFFSET $4::int";
             std::vector<const char*> pp; for(auto& s:pv) pp.push_back(s.c_str());
             res=PQexecParams(d,sql.c_str(),(int)pp.size(),nullptr,pp.data(),nullptr,nullptr,0);
             json="{\"type\":\"web\",\"query\":\""+je(q)+"\",\"page\":"+std::to_string(page)+",\"results\":[";
             int rows=PQntuples(res);
-            for(int i=0;i<rows;i++){if(i>0)json+=",";json+="{\"id\":"+std::string(PQgetvalue(res,i,0))+",\"url\":\""+je(PQgetvalue(res,i,1))+"\",\"title\":\""+je(PQgetvalue(res,i,2))+"\",\"description\":\""+je(PQgetvalue(res,i,3))+"\",\"snippet\":\""+je(PQgetvalue(res,i,4))+"\",\"lang\":\""+std::string(PQgetvalue(res,i,5))+"\",\"type\":\""+std::string(PQgetvalue(res,i,6))+"\",\"score\":"+std::string(PQgetvalue(res,i,7))+"}"; }
-            json+="],\"count\":"+std::to_string(rows)+"}";
+            // Deduplicate by URL — multiple OR conditions can score the same page differently
+            std::unordered_map<std::string,bool> seenUrls;
+            int deduped=0;
+            for(int i=0;i<rows;i++){
+                std::string u=PQgetvalue(res,i,1);
+                if(seenUrls.count(u)) continue; seenUrls[u]=true;
+                if(deduped>0)json+=",";
+                json+="{\"id\":"+std::string(PQgetvalue(res,i,0))+",\"url\":\""+je(u)+"\",\"title\":\""+je(PQgetvalue(res,i,2))+"\",\"description\":\""+je(PQgetvalue(res,i,3))+"\",\"snippet\":\""+je(PQgetvalue(res,i,4))+"\",\"lang\":\""+std::string(PQgetvalue(res,i,5))+"\",\"type\":\""+std::string(PQgetvalue(res,i,6))+"\",\"score\":"+std::string(PQgetvalue(res,i,7))+"}";
+                deduped++;
+            }
+            json+="],\"count\":"+std::to_string(deduped)+"}";
         }
 
         if(res) PQclear(res);
         logSearch(d,q,(int)std::count(json.begin(),json.end(),'{'),type,lang);
         PQfinish(d);
-        cacheSet(r,ck,json,5);
+        cacheSet(r,ck,json,300); // 5 minutes — reduces DB load on repeated searches
         redisFree(r);
         return {200,json};
     }
@@ -814,6 +827,25 @@ public:
         std::string json = "{\"answer\":\"" + je(answer) + "\","
                            "\"model\":\"" + cfg.ollamaModel + "\"}";
         return {200, json};
+    }
+
+    // ── POST /click — CTR tracking ──
+    // Called when a user clicks a search result. Logs url+query+position and
+    // bumps pages.score by 0.1 (capped at 10.0) to feed clicks back into ranking.
+    Res logClick(const Req& req) {
+        auto b=parseQuery(req.body);
+        std::string url  =b.count("url")     ?b.at("url")     :"";
+        std::string query=b.count("query")   ?b.at("query")   :"";
+        std::string pos  =b.count("position")?b.at("position"):"0";
+        if(url.empty()||query.empty()) return {400,R"({"error":"url and query required"})"};
+        auto* d=db();
+        const char* p1[3]={url.c_str(),query.c_str(),pos.c_str()};
+        PQexecParams(d,"INSERT INTO click_logs (url,query,position) VALUES ($1,$2,$3::int)",
+            3,nullptr,p1,nullptr,nullptr,0);
+        const char* p2[1]={url.c_str()};
+        PQexecParams(d,"UPDATE pages SET score=LEAST(score+0.1,10.0) WHERE url=$1",
+            1,nullptr,p2,nullptr,nullptr,0);
+        PQfinish(d); return {200,R"({"ok":true})"};
     }
 
     // ── Bookmark endpoints ──
@@ -1113,12 +1145,14 @@ public:
             "ON CONFLICT (url) DO UPDATE SET crawled=FALSE, crawled_at=NULL, priority=0",
             3, nullptr, p, nullptr, nullptr, 0);
         PQfinish(d);
-        // Also purge from Redis visited set — crawlers skip URLs already in visited,
-        // so without this SREM the URL would be claimed from the DB but never fetched.
+        // Redis: purge visited set (so crawler doesn't skip it) + push to force list
+        // (pub/sub substitute — workers RPOP crawl:force at the start of each loop)
         auto* r = rc();
         if (r && !r->err) {
-            redisReply* rep = (redisReply*)redisCommand(r, "SREM visited %s", url.c_str());
-            freeReplyObject(rep);
+            redisReply* r1=(redisReply*)redisCommand(r,"SREM visited %s",url.c_str());
+            freeReplyObject(r1);
+            redisReply* r2=(redisReply*)redisCommand(r,"LPUSH crawl:force %s",url.c_str());
+            freeReplyObject(r2);
             redisFree(r);
         }
         return {200, R"({"ok":true})"};
@@ -1179,6 +1213,62 @@ public:
             8,nullptr,pp,nullptr,nullptr,0);
         bool saved = (PQresultStatus(pr)==PGRES_COMMAND_OK);
         PQclear(pr);
+
+        // ── Save og:image / twitter:image to images table ──────────────────────
+        // This is why force-crawling a GitHub/LinkedIn profile shows the avatar in image search.
+        auto saveImg = [&](const std::string& imgUrl, const std::string& altText) {
+            if (imgUrl.empty() || imgUrl.substr(0,4) != "http") return;
+            std::string ext; { auto dot=imgUrl.rfind('.'); if(dot!=std::string::npos) ext=imgUrl.substr(dot+1); if(ext.size()>5) ext=""; }
+            const char* ip[6]={imgUrl.c_str(),url.c_str(),altText.c_str(),domain.c_str(),lang.c_str(),ext.c_str()};
+            PQexecParams(d,
+                "INSERT INTO images (url,page_url,alt_text,domain,language,file_type) "
+                "VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (url) DO NOTHING",
+                6,nullptr,ip,nullptr,nullptr,0);
+        };
+        std::string ogImage = htmlMetaContent(html, "og:image");
+        if (ogImage.empty()) ogImage = htmlMetaContent(html, "twitter:image");
+        saveImg(ogImage, title);
+
+        // ── GitHub profile: call GitHub API to get avatar_url directly ──────────
+        // More reliable than HTML scraping — always returns the correct profile photo.
+        if (domain == "github.com") {
+            // Extract username: github.com/{username} — only shallow profiles (no sub-paths)
+            std::string slug = url;
+            auto sep = url.find("github.com/");
+            if (sep != std::string::npos) {
+                slug = url.substr(sep + 11);
+                if (!slug.empty() && slug.back()=='/') slug.pop_back();
+                if (!slug.empty() && slug.find('/')==std::string::npos) {
+                    // Fetch GitHub API with JSON Accept header
+                    CURL* gc = curl_easy_init();
+                    std::string apiResp;
+                    if (gc) {
+                        std::string apiUrl = "https://api.github.com/users/" + slug;
+                        struct curl_slist* gh = nullptr;
+                        gh = curl_slist_append(gh, "Accept: application/vnd.github+json");
+                        gh = curl_slist_append(gh, "X-GitHub-Api-Version: 2022-11-28");
+                        curl_easy_setopt(gc, CURLOPT_URL,           apiUrl.c_str());
+                        curl_easy_setopt(gc, CURLOPT_WRITEFUNCTION, curlWriteCb);
+                        curl_easy_setopt(gc, CURLOPT_WRITEDATA,     &apiResp);
+                        curl_easy_setopt(gc, CURLOPT_TIMEOUT,       8L);
+                        curl_easy_setopt(gc, CURLOPT_USERAGENT,     "AngkorSearchBot/2.3");
+                        curl_easy_setopt(gc, CURLOPT_HTTPHEADER,    gh);
+                        curl_easy_perform(gc);
+                        curl_slist_free_all(gh); curl_easy_cleanup(gc);
+                    }
+                    // Parse avatar_url from JSON
+                    auto av = apiResp.find("\"avatar_url\"");
+                    if (av != std::string::npos) {
+                        auto q1 = apiResp.find('"', av + 13);
+                        auto q2 = q1!=std::string::npos ? apiResp.find('"', q1+1) : std::string::npos;
+                        if (q2 != std::string::npos) {
+                            std::string avatarUrl = apiResp.substr(q1+1, q2-q1-1);
+                            saveImg(avatarUrl, title); // save avatar to images table
+                        }
+                    }
+                }
+            }
+        }
 
         // Mark crawled in queue
         const char* qp[3]={url.c_str(),domain.c_str(),"web"};
@@ -1255,6 +1345,102 @@ public:
         return {200, json};
     }
 
+    // ── GET /social?domain= — social media links for a domain ──
+    // Returns Facebook/YouTube/TikTok/Telegram/Twitter links discovered during crawl.
+    // Used by search result cards to surface official social pages.
+    Res getSocialLinks(const Req& req) {
+        std::string domain = param(req, "domain");
+        if (domain.empty()) return {400, R"({"error":"domain required"})"};
+
+        PGconn* d = db();
+        if (PQstatus(d) != CONNECTION_OK) { PQfinish(d); return {500, R"({"error":"db"})"}; }
+
+        const char* p[1] = {domain.c_str()};
+        PGresult* r = PQexecParams(d,
+            "SELECT platform, url FROM social_links WHERE domain=$1 ORDER BY platform",
+            1, nullptr, p, nullptr, nullptr, 0);
+
+        std::string json = "{\"domain\":\"" + je(domain) + "\",\"links\":[";
+        int n = PQntuples(r);
+        for (int i = 0; i < n; i++) {
+            if (i) json += ",";
+            json += "{\"platform\":\"" + je(PQgetvalue(r,i,0)) + "\","
+                    "\"url\":\""       + je(PQgetvalue(r,i,1)) + "\"}";
+        }
+        json += "]}";
+        PQclear(r); PQfinish(d);
+        return {200, json};
+    }
+
+    // ── GET /sitelinks?domain=&exclude= — top sub-pages from a domain ──
+    // Used by TopResult to show Google-style sitelinks under the first result.
+    Res sitelinks(const Req& req) {
+        std::string domain  = param(req, "domain");
+        std::string exclude = param(req, "exclude");
+        if (domain.empty()) return {400, R"({"error":"domain required"})"};
+
+        auto* d = db();
+        const char* p[2] = {domain.c_str(), exclude.c_str()};
+        PGresult* r = PQexecParams(d,
+            "SELECT url, title, description FROM pages "
+            "WHERE domain=$1 AND url!=$2 AND title IS NOT NULL AND title!='' "
+            "ORDER BY score DESC, word_count DESC LIMIT 6",
+            2, nullptr, p, nullptr, nullptr, 0);
+
+        std::string json = "{\"domain\":\"" + je(domain) + "\",\"links\":[";
+        int n = PQntuples(r);
+        for (int i = 0; i < n; i++) {
+            if (i) json += ",";
+            json += "{\"url\":\""   + je(PQgetvalue(r,i,0)) + "\","
+                    "\"title\":\""  + je(PQgetvalue(r,i,1)) + "\","
+                    "\"desc\":\""   + je(std::string(PQgetvalue(r,i,2)).substr(0,80)) + "\"}";
+        }
+        json += "]}";
+        PQclear(r); PQfinish(d);
+        return {200, json};
+    }
+
+    // ── DELETE /admin/domain?domain= — wipe all data for a domain ──
+    // Removes from: pages, images, videos, news, social_links, crawl_queue.
+    // Returns deleted row counts per table.
+    Res deleteDomain(const Req& req) {
+        std::string domain = param(req, "domain");
+        if (domain.empty()) return {400, R"({"error":"domain required"})"};
+
+        PGconn* d = db();
+        if (PQstatus(d) != CONNECTION_OK) { PQfinish(d); return {500, R"({"error":"db"})"}; }
+
+        const char* p[1] = {domain.c_str()};
+        struct { const char* table; long deleted; } tables[] = {
+            {"pages",       0},
+            {"images",      0},
+            {"videos",      0},
+            {"news",        0},
+            {"social_links",0},
+            {"crawl_queue", 0},
+        };
+        long total = 0;
+        std::string json = "{\"domain\":\"" + je(domain) + "\",\"deleted\":{";
+        for (auto& t : tables) {
+            std::string sql = std::string("DELETE FROM ") + t.table + " WHERE domain=$1";
+            PGresult* r = PQexecParams(d, sql.c_str(), 1, nullptr, p, nullptr, nullptr, 0);
+            if (PQresultStatus(r) == PGRES_COMMAND_OK) {
+                t.deleted = std::stol(PQcmdTuples(r));
+                total += t.deleted;
+            }
+            PQclear(r);
+        }
+        bool first = true;
+        for (auto& t : tables) {
+            if (!first) json += ",";
+            json += "\"" + std::string(t.table) + "\":" + std::to_string(t.deleted);
+            first = false;
+        }
+        json += "},\"total\":" + std::to_string(total) + "}";
+        PQfinish(d);
+        return {200, json};
+    }
+
     Res route(const Req& req) {
         if(req.method=="OPTIONS")     return {200,""};
         if(req.path=="/health")       return health();
@@ -1262,16 +1448,20 @@ public:
         if(req.path=="/search")       return search(req);
         if(req.path=="/suggest")      return suggest(req);
         if(req.path=="/stats")        return stats();
+        if(req.path=="/social")        return getSocialLinks(req);
+        if(req.path=="/sitelinks")     return sitelinks(req);
         if(req.path=="/admin/stats")  return adminStats();
         if(req.path=="/admin/seeds"  && req.method=="GET")    return getSeeds();
         if(req.path=="/admin/seeds"  && req.method=="POST")   return addSeed(req);
         if(req.path=="/admin/seeds"  && req.method=="PATCH")  return updateSeed(req);
         if(req.path=="/admin/seeds"  && req.method=="DELETE") return deleteSeed(req);
+        if(req.path=="/admin/domain" && req.method=="DELETE") return deleteDomain(req);
         if(req.path=="/admin/queue"        && req.method=="POST") return addToQueue(req);
         if(req.path=="/admin/crawl-now"    && req.method=="POST") return crawlNow(req);
         if(req.path=="/admin/crawl-status" && req.method=="GET")  return crawlStatus(req);
         if(req.path=="/admin/system"       && req.method=="GET")  return systemStats();
         if(req.path=="/ai/answer")    return aiAnswer(req);
+        if(req.path=="/click"     && req.method=="POST")   return logClick(req);
         if(req.path=="/bookmark"  && req.method=="POST")   return addBookmark(req);
         if(req.path=="/bookmarks" && req.method=="GET")    return getBookmarks(req);
         if(req.path=="/history"   && req.method=="GET")    return getHistory(req);

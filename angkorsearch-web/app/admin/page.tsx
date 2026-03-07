@@ -164,7 +164,7 @@ function InlinePriority({ seed, onUpdate }: { seed: Seed; onUpdate: () => void }
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-type TabId = 'overview' | 'seeds' | 'queue' | 'system' | 'searches'
+type TabId = 'overview' | 'seeds' | 'queue' | 'system' | 'searches' | 'data'
 
 export default function AdminPage() {
   const { user, loading: authLoading } = useAuth()
@@ -320,6 +320,7 @@ export default function AdminPage() {
             ['queue',    'Crawl Queue'],
             ['system',   'System'],
             ['searches', 'Searches'],
+            ['data',     'Data Manager'],
           ] as [TabId, string][]).map(([id, label]) => (
             <button
               key={id}
@@ -809,7 +810,182 @@ export default function AdminPage() {
           </section>
         )}
 
+        {/* ════════════════ DATA MANAGER TAB ════════════════ */}
+        {tab === 'data' && (
+          <DataManager sysData={sysData} apiUrl={API_URL} />
+        )}
+
       </main>
+    </div>
+  )
+}
+
+// ── Data Manager — storage stats + delete by domain ───────────────────────────
+function DataManager({ sysData, apiUrl }: { sysData: SystemData | null; apiUrl: string }) {
+  const [domain,    setDomain]    = useState('')
+  const [preview,   setPreview]   = useState<Record<string,number> | null>(null)
+  const [previewErr,setPreviewErr]= useState('')
+  const [confirming,setConfirming]= useState(false)
+  const [result,    setResult]    = useState<{ domain: string; total: number; deleted: Record<string,number> } | null>(null)
+  const [busy,      setBusy]      = useState(false)
+
+  async function handlePreview() {
+    if (!domain.trim()) return
+    setBusy(true); setPreview(null); setPreviewErr(''); setResult(null); setConfirming(false)
+    try {
+      const res  = await fetch(`${apiUrl}/search?q=${encodeURIComponent(domain)}&type=web&page=1`, { cache: 'no-store' })
+      const data = await res.json()
+      // Just show approximate counts from stats endpoint
+      const r2   = await fetch(`${apiUrl}/admin/stats`, { cache: 'no-store' })
+      const stats = await r2.json()
+      const domainPages = stats.by_domain?.find((d: {domain:string;count:number}) => d.domain === domain.trim())?.count ?? 0
+      setPreview({ pages: domainPages, images: 0, videos: 0, news: 0, social_links: 0, crawl_queue: 0 })
+      setConfirming(true)
+    } catch {
+      setPreviewErr('Could not fetch preview. Check domain name.')
+    }
+    setBusy(false)
+  }
+
+  async function handleDelete() {
+    setBusy(true)
+    try {
+      const res  = await fetch(`${apiUrl}/admin/domain?domain=${encodeURIComponent(domain.trim())}`, {
+        method: 'DELETE',
+      })
+      const data = await res.json()
+      setResult({ domain: data.domain, total: data.total, deleted: data.deleted })
+      setConfirming(false); setPreview(null); setDomain('')
+    } catch {
+      setPreviewErr('Delete failed. Check API connection.')
+    }
+    setBusy(false)
+  }
+
+  const fmtB = (b: number) => {
+    if (!b) return '0 B'
+    if (b < 1024**2) return (b/1024).toFixed(1) + ' KB'
+    if (b < 1024**3) return (b/1024**2).toFixed(1) + ' MB'
+    return (b/1024**3).toFixed(2) + ' GB'
+  }
+
+  return (
+    <div className="space-y-6">
+
+      {/* ── Storage Overview ── */}
+      {sysData && (
+        <section className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-content">Storage Usage</h3>
+            <span className="text-blue font-mono font-bold text-sm">{sysData.db_size_pretty} total</span>
+          </div>
+          <div className="p-5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5">
+              {[
+                { label: 'Database',  value: sysData.db_size_pretty,     color: 'text-blue'   },
+                { label: 'Redis',     value: fmtB(sysData.redis_used_bytes), color: 'text-purple' },
+                { label: 'Disk Free', value: fmtB(sysData.disk_avail_kb * 1024), color: 'text-green'  },
+              ].map(s => (
+                <div key={s.label} className="bg-card2 rounded-xl p-3 text-center">
+                  <div className={`text-xl font-bold font-mono ${s.color}`}>{s.value}</div>
+                  <div className="text-muted text-xs mt-1">{s.label}</div>
+                </div>
+              ))}
+            </div>
+            <div className="space-y-2.5">
+              {sysData.tables.map(t => {
+                const maxBytes = sysData.tables[0]?.bytes ?? 1
+                return (
+                  <div key={t.name}>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-content font-mono">{t.name}</span>
+                      <span className="text-muted font-mono">{fmtB(t.bytes)}</span>
+                    </div>
+                    <div className="h-1.5 bg-hover rounded-full overflow-hidden">
+                      <div className="h-full bg-blue/60 rounded-full" style={{ width: `${Math.round(t.bytes/maxBytes*100)}%` }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ── Delete by Domain ── */}
+      <section className="bg-card border border-red/20 rounded-xl overflow-hidden">
+        <div className="px-5 py-3 border-b border-red/20 flex items-center gap-2">
+          <span className="text-red text-sm">⚠</span>
+          <h3 className="text-sm font-semibold text-content">Delete Domain Data</h3>
+        </div>
+        <div className="p-5 space-y-4">
+          <p className="text-muted text-xs">
+            Removes <strong className="text-content">all records</strong> for a domain from pages, images, videos, news, social_links, and crawl_queue. This cannot be undone.
+          </p>
+
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={domain}
+              onChange={e => { setDomain(e.target.value); setConfirming(false); setPreview(null); setResult(null); setPreviewErr('') }}
+              placeholder="example.com"
+              className="flex-1 bg-card2 border border-border rounded-lg px-3 py-2 text-sm text-content placeholder-muted focus:outline-none focus:border-red/50 font-mono"
+            />
+            <button
+              onClick={handlePreview}
+              disabled={busy || !domain.trim()}
+              className="px-4 py-2 text-sm bg-card2 border border-border rounded-lg text-content hover:border-red/40 disabled:opacity-40 transition-colors"
+            >
+              {busy ? '…' : 'Check'}
+            </button>
+          </div>
+
+          {previewErr && <p className="text-red text-xs">{previewErr}</p>}
+
+          {confirming && preview && (
+            <div className="bg-red/5 border border-red/20 rounded-xl p-4 space-y-3">
+              <p className="text-sm font-semibold text-red">Confirm deletion for <span className="font-mono">{domain}</span></p>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                {Object.entries(preview).map(([k, v]) => (
+                  <div key={k} className="bg-card2 rounded-lg p-2 text-center">
+                    <div className="font-mono font-bold text-content">{v}</div>
+                    <div className="text-muted mt-0.5">{k}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDelete}
+                  disabled={busy}
+                  className="flex-1 py-2 text-sm bg-red text-white rounded-lg font-semibold hover:bg-red/80 disabled:opacity-40 transition-colors"
+                >
+                  {busy ? 'Deleting…' : `Delete all ${domain} data`}
+                </button>
+                <button
+                  onClick={() => { setConfirming(false); setPreview(null) }}
+                  className="px-4 py-2 text-sm border border-border text-muted rounded-lg hover:text-content transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {result && (
+            <div className="bg-green/5 border border-green/20 rounded-xl p-4 space-y-2">
+              <p className="text-green text-sm font-semibold">✓ Deleted {result.total} records from <span className="font-mono">{result.domain}</span></p>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                {Object.entries(result.deleted).map(([k, v]) => (
+                  <div key={k} className="bg-card2 rounded-lg p-2 text-center">
+                    <div className="font-mono font-bold text-content">{v}</div>
+                    <div className="text-muted mt-0.5">{k}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
     </div>
   )
 }

@@ -242,12 +242,15 @@ function buildProfileLinks(query: string) {
   const handle   = slugDash !== slug ? slugDash : slug
 
   return [
-    { label: 'GitHub',   url: `https://github.com/${handle}`,             color: '#6272a4', crawlable: true  },
-    { label: 'Website',  url: `https://${handle}.me`,                     color: '#5af78e', crawlable: true  },
-    { label: 'Website',  url: `https://${handle}.com`,                    color: '#5af78e', crawlable: true  },
-    { label: 'YouTube',  url: `https://www.youtube.com/@${slug}`,         color: '#ff5555', crawlable: false },
-    { label: 'LinkedIn', url: `https://linkedin.com/in/${handle}`,        color: '#9ec6f3', crawlable: true  },
-    { label: 'Facebook', url: `https://facebook.com/${slug}`,             color: '#6272a4', crawlable: false },
+    { label: 'GitHub',    url: `https://github.com/${handle}`,             color: '#6272a4', crawlable: true  },
+    { label: 'Website',   url: `https://${handle}.me`,                     color: '#5af78e', crawlable: true  },
+    { label: 'Website',   url: `https://${handle}.com`,                    color: '#5af78e', crawlable: true  },
+    { label: 'YouTube',   url: `https://www.youtube.com/@${slug}`,         color: '#ff5555', crawlable: false },
+    { label: 'TikTok',    url: `https://www.tiktok.com/@${slug}`,          color: '#69C9D0', crawlable: false },
+    { label: 'LinkedIn',  url: `https://linkedin.com/in/${handle}`,        color: '#9ec6f3', crawlable: true  },
+    { label: 'Facebook',  url: `https://facebook.com/${slug}`,             color: '#4267B2', crawlable: false },
+    { label: 'Telegram',  url: `https://t.me/${slug}`,                     color: '#2AABEE', crawlable: false },
+    { label: 'Instagram', url: `https://instagram.com/${slug}`,            color: '#E1306C', crawlable: false },
   ]
 }
 
@@ -280,18 +283,134 @@ function RelatedProfiles({ query }: { query: string }) {
   )
 }
 
+// ── Video platform helpers ─────────────────────────────────────────────────────
+const VIDEO_PLATFORMS = [
+  { key: 'youtube',   label: 'YouTube',   match: (u: string) => u.includes('youtube.com') || u.includes('youtu.be') },
+  { key: 'tiktok',    label: 'TikTok',    match: (u: string) => u.includes('tiktok.com') },
+  { key: 'facebook',  label: 'Facebook',  match: (u: string) => u.includes('facebook.com') || u.includes('fb.com') },
+  { key: 'twitter',   label: 'Twitter/X', match: (u: string) => u.includes('twitter.com') || u.includes('x.com') },
+  { key: 'vimeo',     label: 'Vimeo',     match: (u: string) => u.includes('vimeo.com') },
+  { key: 'instagram', label: 'Instagram', match: (u: string) => u.includes('instagram.com') },
+]
+
+function getPlatformKey(url: string) {
+  for (const p of VIDEO_PLATFORMS) if (p.match(url)) return p.key
+  return 'other'
+}
+
+// ── Image detail side panel ────────────────────────────────────────────────────
+function ImagePanel({ item, items, idx, onNav, onClose }: {
+  item: SearchResult; items: SearchResult[]; idx: number
+  onNav: (i: number) => void; onClose: () => void
+}) {
+  const domain = item.domain ?? (() => { try { return new URL(item.page_url || item.url).hostname } catch { return '' } })()
+
+  useEffect(() => {
+    const fn = (e: KeyboardEvent) => {
+      if (e.key === 'Escape')      onClose()
+      if (e.key === 'ArrowRight' && idx < items.length - 1) onNav(idx + 1)
+      if (e.key === 'ArrowLeft'  && idx > 0)                onNav(idx - 1)
+    }
+    document.addEventListener('keydown', fn)
+    return () => document.removeEventListener('keydown', fn)
+  }, [idx, items.length, onNav, onClose])
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+
+      {/* Panel */}
+      <div className="fixed right-0 top-0 h-full z-50 w-full sm:w-[420px] bg-card border-l border-border flex flex-col shadow-2xl overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
+          <span className="text-xs text-muted">{idx + 1} / {items.length}</span>
+          <div className="flex items-center gap-2">
+            <button onClick={() => idx > 0 && onNav(idx - 1)}
+              disabled={idx === 0}
+              className="p-1.5 rounded-lg hover:bg-card2 disabled:opacity-30 text-muted hover:text-content transition-colors">
+              ←
+            </button>
+            <button onClick={() => idx < items.length - 1 && onNav(idx + 1)}
+              disabled={idx === items.length - 1}
+              className="p-1.5 rounded-lg hover:bg-card2 disabled:opacity-30 text-muted hover:text-content transition-colors">
+              →
+            </button>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-card2 text-muted hover:text-content transition-colors">
+              ✕
+            </button>
+          </div>
+        </div>
+
+        {/* Image */}
+        <div className="bg-black/40 flex items-center justify-center min-h-[240px] flex-shrink-0">
+          <img
+            src={item.url}
+            alt={item.alt || item.title || ''}
+            className="max-w-full max-h-[60vh] object-contain"
+          />
+        </div>
+
+        {/* Details */}
+        <div className="p-4 space-y-4 flex-1">
+          {(item.alt || item.title) && (
+            <p className="text-content text-sm font-medium leading-relaxed">{item.alt || item.title}</p>
+          )}
+
+          <div className="space-y-2 text-xs text-muted">
+            <div className="flex items-start gap-2">
+              <span className="text-blue flex-shrink-0 w-16">Domain</span>
+              <span className="text-content">{domain}</span>
+            </div>
+            {item.page_url && (
+              <div className="flex items-start gap-2">
+                <span className="text-blue flex-shrink-0 w-16">Source</span>
+                <a href={item.page_url} target="_blank" rel="noreferrer"
+                  className="text-blue hover:underline truncate">{item.page_url}</a>
+              </div>
+            )}
+            {item.type && (
+              <div className="flex items-start gap-2">
+                <span className="text-blue flex-shrink-0 w-16">Type</span>
+                <span className="text-content uppercase">{item.type}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Actions */}
+          <div className="grid grid-cols-2 gap-2 pt-2">
+            <a href={item.url} target="_blank" rel="noreferrer"
+              className="flex items-center justify-center gap-1.5 text-xs py-2 px-3 rounded-lg bg-blue text-white hover:bg-blue/80 transition-colors font-medium">
+              🖼 Full size
+            </a>
+            <a href={item.page_url || item.url} target="_blank" rel="noreferrer"
+              className="flex items-center justify-center gap-1.5 text-xs py-2 px-3 rounded-lg border border-border text-content hover:border-blue/40 transition-colors">
+              🔗 Source page
+            </a>
+            <button
+              onClick={() => navigator.clipboard.writeText(item.url)}
+              className="flex items-center justify-center gap-1.5 text-xs py-2 px-3 rounded-lg border border-border text-content hover:border-blue/40 transition-colors col-span-2">
+              📋 Copy image URL
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
 // ── Infinite-scroll media section ─────────────────────────────────────────────
 function MediaGrid({
   query, tab, lang,
 }: { query: string; tab: 'image' | 'video'; lang: string }) {
-  const [items, setItems]       = useState<SearchResult[]>([])
-  const [pg, setPg]             = useState(1)
-  const [hasMore, setHasMore]   = useState(true)
-  const [loading, setLoading]   = useState(false)
-  const [cat, setCat]           = useState('')
-  const sentinelRef             = useRef<HTMLDivElement>(null)
+  const [items, setItems]           = useState<SearchResult[]>([])
+  const [pg, setPg]                 = useState(1)
+  const [hasMore, setHasMore]       = useState(true)
+  const [loading, setLoading]       = useState(false)
+  const [platFilter, setPlatFilter] = useState('')
+  const [panelIdx, setPanelIdx]     = useState(-1)
+  const sentinelRef                 = useRef<HTMLDivElement>(null)
 
-  // Keep latest values in a ref to avoid stale closures in IntersectionObserver
   const stateRef = useRef({ query, tab, lang, pg, hasMore, loading })
   stateRef.current = { query, tab, lang, pg, hasMore, loading }
 
@@ -310,17 +429,16 @@ function MediaGrid({
     setLoading(false)
   }, [])
 
-  // Reset + fetch page 1 when query/tab/lang changes
   useEffect(() => {
     if (!query) return
-    setCat('')
+    setPlatFilter('')
+    setPanelIdx(-1)
     setItems([])
     setPg(1)
     setHasMore(true)
     doFetch(1, true)
   }, [query, tab, lang, doFetch])
 
-  // IntersectionObserver sentinel
   useEffect(() => {
     const el = sentinelRef.current
     if (!el) return
@@ -333,78 +451,104 @@ function MediaGrid({
     return () => obs.disconnect()
   }, [doFetch])
 
-  // Derive category list (unique domains) from loaded items
-  const categories = useMemo(() => {
+  // For video: derive which platforms are present in results
+  const presentPlatforms = useMemo(() => {
+    if (tab !== 'video') return []
     const seen = new Set<string>()
-    items.forEach(r => {
-      const d = r.domain ?? (() => { try { return new URL(r.url).hostname } catch { return '' } })()
-      if (d) seen.add(d)
-    })
-    return Array.from(seen)
-  }, [items])
+    items.forEach(r => seen.add(getPlatformKey(r.url)))
+    return VIDEO_PLATFORMS.filter(p => seen.has(p.key))
+  }, [items, tab])
 
-  const filtered = cat ? items.filter(r => {
-    const d = r.domain ?? (() => { try { return new URL(r.url).hostname } catch { return '' } })()
-    return d === cat
-  }) : items
+  const filtered = useMemo(() => {
+    if (!platFilter) return items
+    return items.filter(r => getPlatformKey(r.url) === platFilter)
+  }, [items, platFilter])
+
+  const panelItem = panelIdx >= 0 ? filtered[panelIdx] ?? null : null
 
   return (
     <div>
-      {/* Category filter pills */}
-      {categories.length > 1 && (
+      {/* ── Video platform filter pills ── */}
+      {tab === 'video' && presentPlatforms.length > 1 && (
         <div className="flex flex-wrap gap-2 mb-4">
-          <button
-            onClick={() => setCat('')}
+          <button onClick={() => setPlatFilter('')}
             className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
-              cat === '' ? 'bg-blue text-white border-blue' : 'border-border text-muted hover:border-blue/50 hover:text-content'
-            }`}
-          >
-            All
-          </button>
-          {categories.map(d => (
-            <button
-              key={d}
-              onClick={() => setCat(d)}
+              platFilter === '' ? 'bg-blue text-white border-blue' : 'border-border text-muted hover:border-blue/50 hover:text-content'
+            }`}>All</button>
+          {presentPlatforms.map(p => (
+            <button key={p.key} onClick={() => setPlatFilter(p.key)}
               className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
-                cat === d ? 'bg-blue text-white border-blue' : 'border-border text-muted hover:border-blue/50 hover:text-content'
-              }`}
-            >
-              {d}
-            </button>
+                platFilter === p.key ? 'bg-blue text-white border-blue' : 'border-border text-muted hover:border-blue/50 hover:text-content'
+              }`}>{p.label}</button>
           ))}
         </div>
       )}
 
-      {/* Loading skeleton (first load) */}
+      {/* ── Loading skeleton ── */}
       {loading && items.length === 0 && <Skeleton />}
 
-      {/* Image grid */}
-      {tab === 'image' && (
-        <div className="columns-2 sm:columns-3 gap-3">
-          {filtered.map((r, i) => <ImageResult key={r.url + i} result={r} index={i} />)}
+      {/* ── Empty state ── */}
+      {!loading && items.length === 0 && (
+        <div className="py-8 space-y-4 max-w-lg">
+          <p className="text-content font-semibold text-sm">
+            No {tab === 'image' ? 'images' : 'videos'} indexed yet for &ldquo;{query}&rdquo;
+          </p>
+          <p className="text-muted text-sm">
+            The crawler hasn&apos;t visited those pages yet. Force-crawl specific URLs to index photos.
+          </p>
+          <div className="space-y-2">
+            {[`https://github.com/${query.replace(/\s+/g,'')}`,`https://linkedin.com/in/${query.replace(/\s+/g,'-')}`].map(url => (
+              <a key={url} href={`/crawl?url=${encodeURIComponent(url)}`}
+                className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border hover:border-blue/40 text-muted hover:text-content transition-all">
+                <span className="text-blue">⚡</span><span className="truncate">Force crawl {url}</span>
+              </a>
+            ))}
+            <a href="/crawl" className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border hover:border-blue/40 text-muted hover:text-content transition-all">
+              <span className="text-green">+</span><span>Crawl a custom URL</span>
+            </a>
+          </div>
+          <p className="text-[11px] text-muted">Facebook, Instagram, TikTok profiles require login — cannot be crawled.</p>
         </div>
       )}
 
-      {/* Video grid */}
+      {/* ── Image masonry grid (full width, 4-6 cols) ── */}
+      {tab === 'image' && filtered.length > 0 && (
+        <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 xl:columns-6 gap-2">
+          {filtered.map((r, i) => (
+            <ImageResult key={r.url + i} result={r} index={i} onSelect={() => setPanelIdx(i)} />
+          ))}
+        </div>
+      )}
+
+      {/* ── Video grid (3-4 cols) ── */}
       {tab === 'video' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filtered.map((r, i) => <VideoResult key={r.id ?? i} result={r} index={i} />)}
         </div>
       )}
 
-      {/* Sentinel + load-more spinner */}
-      <div ref={sentinelRef} className="h-8 mt-4 flex items-center justify-center">
+      {/* ── Load-more sentinel ── */}
+      <div ref={sentinelRef} className="h-10 mt-4 flex items-center justify-center">
         {loading && items.length > 0 && (
           <div className="flex gap-1.5">
-            {[0, 1, 2].map(i => (
-              <div key={i} className="w-2 h-2 rounded-full bg-blue animate-pulse" style={{ animationDelay: `${i * 0.15}s` }} />
-            ))}
+            {[0,1,2].map(i => <div key={i} className="w-2 h-2 rounded-full bg-blue animate-pulse" style={{ animationDelay: `${i*0.15}s` }} />)}
           </div>
         )}
         {!hasMore && filtered.length > 0 && (
-          <p className="text-muted text-xs">All {filtered.length} results loaded</p>
+          <p className="text-muted text-xs">{filtered.length} results loaded</p>
         )}
       </div>
+
+      {/* ── Image detail side panel ── */}
+      {panelItem && (
+        <ImagePanel
+          item={panelItem}
+          items={filtered}
+          idx={panelIdx}
+          onNav={i => setPanelIdx(i)}
+          onClose={() => setPanelIdx(-1)}
+        />
+      )}
     </div>
   )
 }
@@ -421,7 +565,8 @@ export default function SearchResults({ query, tab, page, lang, onResults }: Pro
     if (tab === 'history')   { loadHistory();   return }
     // image/video use their own MediaGrid state — skip useSearch for them
     if (tab === 'image' || tab === 'video') return
-    search(query, tab, page, lang)
+    // AI tab searches as 'web' type — shows crawled pages from AI tool domains
+    search(query, tab === 'ai' ? 'all' : tab, page, lang)
   }, [query, tab, page, lang])
 
   useEffect(() => {
@@ -540,6 +685,50 @@ export default function SearchResults({ query, tab, page, lang, onResults }: Pro
         <p className="text-muted text-xs mb-4">{results.length.toLocaleString()} dev & tech resources</p>
         {results.map((r, i) => <GithubResult key={r.id ?? i} result={r} index={i} />)}
         <Pagination page={page} hasMore={results.length === 10} onPage={goPage} />
+      </div>
+    )
+  }
+
+  // ── AI Tools ──
+  if (tab === 'ai') {
+    const AI_DOMAINS = [
+      { domain: 'claude.ai',        label: 'Claude',     color: '#D97757', icon: '🤖' },
+      { domain: 'chat.openai.com',  label: 'ChatGPT',    color: '#10a37f', icon: '🧠' },
+      { domain: 'perplexity.ai',    label: 'Perplexity', color: '#9ec6f3', icon: '🔎' },
+      { domain: 'gemini.google.com',label: 'Gemini',     color: '#4285f4', icon: '✨' },
+      { domain: 'huggingface.co',   label: 'HuggingFace',color: '#FFD21E', icon: '🤗' },
+      { domain: 'ollama.com',       label: 'Ollama',     color: '#5af78e', icon: '🦙' },
+      { domain: 'arxiv.org',        label: 'arXiv',      color: '#abb2bf', icon: '📄' },
+      { domain: 'quantumai.google', label: 'Quantum AI', color: '#4285f4', icon: '⚛️' },
+      { domain: 'discord.com',      label: 'Discord',    color: '#5865F2', icon: '💬' },
+    ]
+    return (
+      <div>
+        <p className="text-muted text-xs mb-5">Popular AI tools &amp; tech platforms</p>
+        {/* Quick links grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-8">
+          {AI_DOMAINS.map(ai => (
+            <a key={ai.domain} href={`https://${ai.domain}`} target="_blank" rel="noreferrer"
+              className="flex items-center gap-3 p-3 bg-card border border-border rounded-xl hover:border-blue/40 transition-all group">
+              <span className="text-2xl">{ai.icon}</span>
+              <div>
+                <p className="text-content text-sm font-semibold group-hover:text-blue transition-colors">{ai.label}</p>
+                <p className="text-xs" style={{ color: ai.color }}>{ai.domain}</p>
+              </div>
+            </a>
+          ))}
+        </div>
+        {/* Crawled results for the AI query */}
+        {results.length > 0 && (
+          <div>
+            <p className="text-muted text-xs mb-3">{results.length} indexed results</p>
+            {results.map((r, i) => <WebResult key={r.id ?? i} result={r} query={query} index={i} />)}
+            <Pagination page={page} hasMore={results.length === 10} onPage={goPage} />
+          </div>
+        )}
+        {results.length === 0 && !loading && (
+          <p className="text-muted text-sm">No indexed results yet — the crawler is discovering these sites.</p>
+        )}
       </div>
     )
   }

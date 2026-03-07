@@ -8,13 +8,14 @@ export const API_URL =
 export const USER_ID = 1
 
 export const TABS: Tab[] = [
-  { id: 'all',       label: 'All'     },
-  { id: 'news',      label: 'News'    },
-  { id: 'image',     label: 'Images'  },
-  { id: 'video',     label: 'Videos'  },
+  { id: 'all',       label: 'All'        },
+  { id: 'news',      label: 'News'       },
+  { id: 'image',     label: 'Images'     },
+  { id: 'video',     label: 'Videos'     },
   { id: 'github',    label: 'Dev & Tech' },
-  { id: 'bookmarks', label: 'Saved'   },
-  { id: 'history',   label: 'History' },
+  { id: 'ai',        label: 'AI Tools'   },
+  { id: 'bookmarks', label: 'Saved'      },
+  { id: 'history',   label: 'History'    },
 ]
 
 export const QUICK_SEARCHES = [

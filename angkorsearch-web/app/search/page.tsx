@@ -26,12 +26,14 @@ export default function SearchPage() {
     setPanelResult(null) // reset panel on new search
   }, [params])
 
+  const isMediaTab = tab === 'image' || tab === 'video'
+
   return (
     <div className="flex flex-col min-h-screen bg-primary">
       <Header query={query} tab={tab} lang={lang} onLang={setLang} />
 
       <div className="flex-1 flex justify-center">
-        <div className="w-full max-w-5xl px-4 py-5 flex gap-6">
+        <div className={`w-full ${isMediaTab ? 'max-w-full px-3' : 'max-w-5xl px-4'} py-5 flex gap-6`}>
           <main className="flex-1 min-w-0">
             <SearchResults
               query={query}

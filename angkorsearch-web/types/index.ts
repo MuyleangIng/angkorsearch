@@ -101,7 +101,7 @@ export interface HistoryEntry {
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
 
-export type TabId = 'all' | 'news' | 'image' | 'video' | 'github' | 'bookmarks' | 'history'
+export type TabId = 'all' | 'news' | 'image' | 'video' | 'github' | 'ai' | 'bookmarks' | 'history'
 
 export interface Tab {
   id:    TabId

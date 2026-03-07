@@ -16,17 +16,29 @@ No external search APIs. No Google. No Bing. 100% self-hosted.
 
 ## Features
 
-- **9-strategy fuzzy search** — FTS + trigram + URL + prefix/suffix + per-word + content + domain matching
-- **Auto Web Discovery** — when no results found, auto-discovers related URLs (GitHub, personal sites, npm, LinkedIn) and crawls them live
-- **Direct Force Crawl** — instantly fetch and index any URL without waiting in queue
-- **Multiple content tabs** — All, News, Images, Videos, Dev & Tech, Saved, History
+- **9-strategy fuzzy search** — FTS + trigram + URL + prefix/suffix + per-word + description + domain matching
+- **Google-style sitelinks** — top result shows sub-page links from the same domain
+- **Auto Web Discovery** — when no results found, auto-discovers related URLs (GitHub, personal sites, npm, LinkedIn, Twitter/X, Substack) and crawls them live
+- **Direct Force Crawl** — instantly fetch and index any URL; automatically saves og:image, twitter:image, and GitHub profile avatars to the images table
+- **Multiple content tabs** — All, News, Images, Videos, Dev & Tech, AI Tools, Saved, History
+- **Full-width media grid** — masonry image grid (2–6 columns), video grid (1–4 columns) with platform filter pills
+- **Image side panel** — click any image to open a fixed right panel with preview, details, prev/next navigation (arrow keys + ESC), full-size / source / copy-URL actions
+- **Right-click image context menu** — View details, Open full size, Open source page, Copy URL
+- **Video platform badges** — per-result color badge (YouTube, TikTok, Twitter, Vimeo, etc.) with platform filter pills
+- **YouTube thumbnails** — auto-constructed from video ID (`maxresdefault.jpg`)
+- **oEmbed thumbnails** — TikTok, Twitter, Spotify thumbnails fetched via official oEmbed APIs
+- **Social links extraction** — crawler saves Facebook, YouTube, TikTok, Telegram, Twitter, Instagram, LinkedIn links found on pages; exposed via `GET /social?domain=`
 - **AI Answer overview** — powered by local Ollama LLM (no cloud, no API keys)
+- **AI Tools tab** — quick-launch grid for Claude, ChatGPT, Perplexity, Gemini, HuggingFace, Ollama, arXiv, Discord
 - **Knowledge Panel** — right-side info card for top results
+- **Data Manager** (Admin) — storage overview (DB size, Redis, disk free), per-table size bars, delete all pages for a domain by name
 - **Dark / Light mode** — persisted via localStorage
 - **Autocomplete suggestions** — as you type
 - **Bookmarks & Search History** — saved per user
-- **Admin Dashboard** — seed domains, crawl queue, system monitoring, top searches
+- **Admin Dashboard** — seed domains, crawl queue, system monitoring, top searches, data management
 - **Multi-worker crawler** — 4 concurrent C++ crawlers, up to 100,000 pages each
+- **Smart content cap** — Cambodian/news/shallow pages get 80 KB of content indexed; all other pages get 500 chars summary-only to save DB space
+- **Fast search** — no ILIKE on large content column (FTS GIN index covers it); Redis cache TTL 300s
 - **Open-domain crawling** — crawls any public website (blocks walled gardens: Facebook, Instagram, TikTok, Twitter)
 - **Responsive UI** — works on mobile, tablet, and desktop
 
@@ -62,25 +74,38 @@ No external search APIs. No Google. No Bing. 100% self-hosted.
                │                  │  │                       │
                │  pages           │  │  visited URL set      │
                │  crawl_queue     │  │  search result cache  │
-               │  seeds           │  │  crawl queue signal   │
-               │  users           │  └───────────────────────┘
-               │  bookmarks       │
-               │  search_history  │         ┌────────────────┐
-               │  images/videos   │         │   Ollama LLM   │
-               │  news/github     │         │   :11434       │
-               └──────────────────┘         │   qwen2.5:3b   │
-                                            └────────────────┘
+               │  seeds           │  │  (TTL 300s)           │
+               │  users           │  │  domain cooldown      │
+               │  bookmarks       │  └───────────────────────┘
+               │  search_history  │
+               │  images          │         ┌────────────────┐
+               │  videos          │         │   Ollama LLM   │
+               │  news            │         │   :11434       │
+               │  github_repos    │         │   qwen2.5:3b   │
+               │  social_links    │         └────────────────┘
+               │  crawler_live    │
+               └──────────────────┘
 
                ┌───────────────────────────────────────────────┐
                │              C++ Crawlers × 4                 │
                │  crawler_1  crawler_2  crawler_3  crawler_4   │
                │                                               │
                │  1. Pull URL from crawl_queue (priority ASC)  │
-               │  2. Fetch with libcurl                        │
+               │  2. Fetch with libcurl (12s timeout)          │
                │  3. Parse HTML (Gumbo parser)                 │
-               │  4. Save to pages table (PostgreSQL)          │
-               │  5. Enqueue outbound links                    │
-               │  6. Track visited URLs in Redis SET           │
+               │     · title, meta description, body text      │
+               │     · og:image, twitter:image (social meta)   │
+               │     · srcset / data-lazy-src images           │
+               │     · social link hrefs (FB/YT/TG/IG/TW/LI)  │
+               │     · YouTube embed → thumbnail URL           │
+               │     · TikTok/Twitter oEmbed thumbnails        │
+               │  4. Smart content cap:                        │
+               │     · Cambodian / news / depth≤2 → 80 KB     │
+               │     · Everything else → 500 chars (summary)  │
+               │  5. Save to pages table (PostgreSQL FTS)      │
+               │  6. Save images/videos/social_links tables    │
+               │  7. Enqueue outbound links                    │
+               │  8. Track visited URLs in Redis SET           │
                └───────────────────────────────────────────────┘
 ```
 
@@ -270,6 +295,8 @@ docker compose down -v
 | `GET` | `/ai/answer?q=what+is+angkor+wat` | AI-generated answer (Ollama) |
 | `GET` | `/live?since=10` | Recently crawled pages |
 | `GET` | `/stats` | Index statistics |
+| `GET` | `/sitelinks?domain=example.com&exclude=https://example.com` | Sub-page links for Google-style sitelinks |
+| `GET` | `/social?domain=example.com` | Social media links extracted from a domain |
 | `GET` | `/health` | Health check |
 
 **Search types:** `web`, `news`, `image`, `video`, `github`
@@ -294,7 +321,8 @@ docker compose down -v
 | `PATCH` | `/admin/seeds` | Update seed priority or status |
 | `DELETE` | `/admin/seeds?id=1` | Delete a seed |
 | `POST` | `/admin/queue` | Force-add URL to crawl queue (P1) |
-| `POST` | `/admin/crawl-now` | Directly fetch + index a URL immediately |
+| `POST` | `/admin/crawl-now` | Directly fetch + index a URL; saves og:image + GitHub avatar |
+| `DELETE` | `/admin/domain?domain=example.com` | Delete all pages/images/videos/news/social_links for a domain |
 | `GET` | `/admin/system` | System resource metrics |
 
 ### Next.js API Routes (SSE)
@@ -340,18 +368,23 @@ This means a search for "leang" can still find "muyleanging.com" because the URL
 When a search returns 0 results, the WebDiscovery component activates automatically:
 
 1. Sends the query to `/api/auto-discover?q=...`
-2. Generates candidate URLs from the query words:
-   - `github.com/{slug}` — GitHub profile
-   - `{slug}.com` — personal/project website
-   - `{slug}.github.io` — GitHub Pages
-   - `{slug}.dev` — developer domain
-   - `npmjs.com/package/{slug}` — npm package
+2. Generates candidate URLs from the query words (ordered by likelihood):
+   - `github.com/{slug}` + `{slug}.github.io` — GitHub profile / pages
+   - `gitlab.com/{slug}` — GitLab profile
+   - `{slug}.com`, `{slug}.io`, `{slug}.dev`, `{slug}.me`, … (20 TLDs) — personal/project sites
+   - `{slug}.vercel.app`, `{slug}.netlify.app`, `{slug}.pages.dev` — hosted deployments
+   - `dev.to/{slug}`, `medium.com/@{slug}`, `{slug}.hashnode.dev` — dev blogs
+   - `npmjs.com/package/{slug}`, `pypi.org/user/{slug}` — package registries
    - `linkedin.com/in/{slug}` — LinkedIn profile
-3. Calls `/admin/crawl-now` for each candidate
+   - `twitter.com/{slug}`, `x.com/{slug}` — Twitter/X public profiles
+   - `{slug}.substack.com` — Substack newsletter
+   - `youtube.com/@{slug}` — YouTube channel
+   - `huggingface.co/{slug}` — HuggingFace profile
+3. Calls `/admin/crawl-now` for each candidate in parallel (8 at a time, 8s timeout each)
 4. Streams live progress in a terminal-style UI
 5. Auto-refreshes search results when new pages are indexed
 
-**Note:** Facebook, Instagram, TikTok, Twitter, and other walled gardens cannot be crawled — they block all bots. Even Google does not index private social media content.
+**Note:** Facebook, Instagram, TikTok, and other walled gardens block all bots. Even Google does not index private social media content. Public Twitter/X profile pages can sometimes be crawled.
 
 ---
 
@@ -366,6 +399,7 @@ Access at **http://localhost/admin**
 | **Crawl Queue** | Force-add any URL at Priority 1, domain progress bars, queue stats |
 | **System** | RAM, Disk, Redis memory gauges, pages/hour, API uptime, DB table sizes |
 | **Searches** | Top search queries bar chart |
+| **Data Manager** | DB + Redis + disk storage overview, per-table size bars, delete all data for a domain |
 
 ---
 
@@ -420,7 +454,8 @@ angkorsearch/
 │   └── init.sql                    Database schema + indexes + views
 │                                   Tables: pages, crawl_queue, seeds, users,
 │                                   bookmarks, search_history, images, videos,
-│                                   news, github_repos, crawler_live
+│                                   news, github_repos, social_links,
+│                                   crawler_live
 │
 ├── nginx/
 │   └── nginx.conf                  Reverse proxy config
@@ -474,6 +509,42 @@ seeds (
     type     TEXT,
     priority INT,
     active   BOOLEAN
+)
+
+-- Social media links extracted from crawled pages
+social_links (
+    id          SERIAL PRIMARY KEY,
+    domain      TEXT,
+    platform    TEXT,   -- 'facebook' | 'youtube' | 'tiktok' | 'telegram' | 'twitter' | 'instagram' | 'linkedin'
+    url         TEXT,
+    source_page TEXT,
+    found_at    TIMESTAMP,
+    UNIQUE(domain, platform, url)
+)
+
+-- Images indexed from crawled pages
+images (
+    id         SERIAL PRIMARY KEY,
+    url        TEXT UNIQUE,
+    src        TEXT,
+    alt        TEXT,
+    domain     TEXT,
+    page_url   TEXT,
+    width      INT,
+    height     INT,
+    indexed_at TIMESTAMP
+)
+
+-- Videos indexed from crawled pages
+videos (
+    id         SERIAL PRIMARY KEY,
+    url        TEXT UNIQUE,
+    title      TEXT,
+    thumb_url  TEXT,
+    domain     TEXT,
+    channel    TEXT,
+    page_url   TEXT,
+    indexed_at TIMESTAMP
 )
 ```
 
@@ -574,6 +645,38 @@ docker compose up -d --build
 ```
 
 For HTTPS, add Certbot + nginx SSL config, or put Cloudflare in front.
+
+---
+
+## Changelog
+
+### v2.3 (2025)
+- Google-style **sitelinks** on top search result (`/sitelinks` endpoint)
+- **Social links** extraction — crawler detects and stores FB/YT/TT/TG/TW/IG/LI links (`social_links` table, `/social` endpoint)
+- **YouTube thumbnails** auto-constructed from embed video IDs
+- **oEmbed thumbnails** for TikTok, Twitter, Spotify via official APIs
+- `crawlNow` now saves **og:image**, **twitter:image**, and **GitHub avatar** to `images` table
+- **Full-width media layout** — masonry image grid, video grid with platform filter pills
+- **Image side panel** with keyboard nav (arrows + ESC), context menu, copy/open actions
+- **Video platform badges** (YouTube, TikTok, Vimeo, Twitter, etc.)
+- **AI Tools tab** — quick-launch panel for popular AI services
+- **Data Manager** admin tab — storage stats + delete-by-domain
+- `DELETE /admin/domain` endpoint — wipes all rows for a domain across 6 tables
+- Auto-discovery expanded: Twitter/X profiles, Substack newsletters
+- **Smart content cap**: 80 KB for Cambodian/news/shallow pages, 500 chars for others
+- **Search speed**: removed `content ILIKE` from WHERE (FTS covers it); Redis TTL 300s
+
+### v2.2 (2024)
+- FTS switched to `'simple'` dictionary + ILIKE fallback (fixed Khmer/short-word search)
+- 4 parallel C++ crawler workers
+- AI Answer via local Ollama (qwen2.5:3b)
+- Admin dashboard with domain chart, type/lang breakdown, live feed
+- Knowledge Panel, PeopleAlsoAsk, WebDiscovery SSE stream
+
+### v2.0 (2024)
+- Complete rewrite: C++ API + Next.js 14 frontend
+- PostgreSQL FTS + pg_trgm 9-strategy search
+- Docker Compose multi-service setup
 
 ---
 

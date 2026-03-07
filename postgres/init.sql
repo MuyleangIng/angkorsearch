@@ -34,7 +34,8 @@ CREATE INDEX IF NOT EXISTS idx_pages_domain ON pages(domain);
 CREATE INDEX IF NOT EXISTS idx_pages_lang   ON pages(language);
 CREATE INDEX IF NOT EXISTS idx_pages_type   ON pages(page_type);
 CREATE INDEX IF NOT EXISTS idx_pages_score  ON pages(score DESC);
-CREATE INDEX IF NOT EXISTS idx_pages_trgm   ON pages USING gin(coalesce(title,'') gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_pages_trgm      ON pages USING gin(title gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_pages_desc_trgm ON pages USING gin(description gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_pages_updated ON pages(updated_at DESC);
 
 -- ─────────────────────────────────────────
@@ -93,6 +94,7 @@ CREATE TABLE IF NOT EXISTS github_repos (
     owner_url    TEXT,
     topics       TEXT[],
     is_cambodian BOOLEAN DEFAULT TRUE,
+    source       VARCHAR(20) DEFAULT 'github', -- 'github' or 'gitlab'
     crawled_at   TIMESTAMP DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_github_fts   ON github_repos USING gin(to_tsvector('simple', coalesce(name,'') || ' ' || coalesce(description,'')));
@@ -231,9 +233,78 @@ INSERT INTO seeds (url, domain, seed_type, priority) VALUES
 ('https://gogoanime.tv',               'gogoanime.tv',              'web',    2),
 ('https://zoro.to',                    'zoro.to',                   'web',    2),
 ('https://animesuge.to',               'animesuge.to',              'web',    3),
-('https://github.com/topics/cambodia', 'github.com',                'github', 1),
-('https://github.com/topics/khmer',    'github.com',                'github', 1),
-('https://github.com/camb-lang',       'github.com',                'github', 1)
+('https://github.com/topics/cambodia',       'github.com',  'github', 1),
+('https://github.com/topics/khmer',         'github.com',  'github', 1),
+('https://github.com/camb-lang',            'github.com',  'github', 1),
+('https://github.com/search?q=location%3ACambodia&type=users', 'github.com', 'github', 1),
+-- GitLab: Cambodia/Khmer projects and developers
+('https://gitlab.com/explore/projects?sort=stars_desc&search=cambodia', 'gitlab.com', 'github', 2),
+('https://gitlab.com/explore/projects?sort=stars_desc&search=khmer',    'gitlab.com', 'github', 2),
+('https://gitlab.com/users/sign_in',         'gitlab.com',  'github', 9),
+-- Tech companies — public sites, products, docs
+('https://www.apple.com',                    'apple.com',               'web',   3),
+('https://www.samsung.com',                  'samsung.com',             'web',   3),
+('https://www.sony.com',                     'sony.com',                'web',   4),
+('https://www.nokia.com',                    'nokia.com',               'web',   4),
+('https://www.oppo.com',                     'oppo.com',                'web',   4),
+('https://www.ibm.com',                      'ibm.com',                 'web',   3),
+('https://research.ibm.com/quantum-computing','ibm.com',                'web',   2),
+('https://www.google.com',                   'google.com',              'web',   3),
+-- Quantum computing
+('https://quantumai.google',                 'quantumai.google',        'web',   2),
+('https://xanadu.ai',                        'xanadu.ai',               'web',   2),
+('https://pennylane.ai',                     'pennylane.ai',            'web',   2),
+('https://www.ibm.com/quantum',              'ibm.com',                 'web',   2),
+-- Shopping — Cambodia + popular
+('https://khmer24.com',                      'khmer24.com',             'web',   1),
+('https://www.coupang.com',                  'coupang.com',             'web',   3),
+('https://shop.com.kh',                      'shop.com.kh',             'web',   2),
+('https://jd.com',                           'jd.com',                  'web',   4),
+-- Developer resources — StackOverflow, MDN, dev.to, Medium, HackerNews
+('https://stackoverflow.com/questions/tagged/cambodia',      'stackoverflow.com',     'web',   2),
+('https://stackoverflow.com/questions/tagged/khmer',         'stackoverflow.com',     'web',   2),
+('https://developer.mozilla.org/en-US/docs/Learn_web_development', 'developer.mozilla.org','web',3),
+('https://developer.mozilla.org/en-US/docs/Web',             'developer.mozilla.org', 'web',   3),
+('https://dev.to',                                           'dev.to',                'web',   2),
+('https://dev.to/t/cambodia',                                'dev.to',                'web',   2),
+('https://medium.com/tag/cambodia',                          'medium.com',            'web',   2),
+('https://medium.com/tag/khmer',                             'medium.com',            'web',   2),
+('https://news.ycombinator.com',                             'news.ycombinator.com',  'web',   3),
+-- AI Tools — public landing pages are crawlable; their content shows in web search
+('https://claude.ai',                        'claude.ai',               'web',   3),
+('https://chat.openai.com',                  'chat.openai.com',         'web',   3),
+('https://www.perplexity.ai',                'perplexity.ai',           'web',   3),
+('https://gemini.google.com',                'gemini.google.com',       'web',   3),
+('https://huggingface.co',                   'huggingface.co',          'web',   2),
+('https://huggingface.co/models',            'huggingface.co',          'web',   2),
+('https://ollama.com/library',               'ollama.com',              'web',   3),
+-- Quantum / Advanced tech
+('https://research.ibm.com/quantum-computing','ibm.com',                'web',   4),
+('https://quantumai.google',                 'quantumai.google',        'web',   4),
+('https://arxiv.org/cs.AI',                  'arxiv.org',               'web',   3),
+('https://arxiv.org/cs.CR',                  'arxiv.org',               'web',   4),
+-- Community / Popular
+('https://discord.com/safety',               'discord.com',             'web',   5),
+('https://www.reddit.com/r/cambodia',        'reddit.com',              'web',   3),
+('https://www.reddit.com/r/learnprogramming','reddit.com',              'web',   4),
+('https://dev.to/t/cambodia',                'dev.to',                  'web',   2),
+('https://medium.com/tag/cambodia',          'medium.com',              'web',   3),
+('https://stackoverflow.com/questions/tagged/khmer', 'stackoverflow.com','web',  3),
+-- Additional Cambodian news / media
+('https://m.freshnews.com.kh/',              'freshnews.com.kh',        'news',  1),
+('https://ams.com.kh/',                      'ams.com.kh',              'news',  2),
+('https://khmercivilization.ams.com.kh/ams-khmer-portal', 'ams.com.kh','web',   2),
+-- Government portal — lists all ministries; crawler discovers sub-domains from here
+('https://www.gov.kh/',                      'gov.kh',                  'web',   1),
+-- Key ministry sites (crawler will follow links to discover more .gov.kh sub-domains)
+('https://mfa.gov.kh',                       'mfa.gov.kh',              'web',   2),
+('https://commerce.gov.kh',                  'commerce.gov.kh',         'web',   2),
+('https://mlmupc.gov.kh',                    'mlmupc.gov.kh',           'web',   2),
+('https://mot.gov.kh',                       'mot.gov.kh',              'web',   2),
+('https://mptc.gov.kh',                      'mptc.gov.kh',             'web',   2),
+('https://mef.gov.kh',                       'mef.gov.kh',              'web',   2),
+('https://moh.gov.kh',                       'moh.gov.kh',              'web',   2),
+('https://moeys.gov.kh',                     'moeys.gov.kh',            'web',   2)
 ON CONFLICT (url) DO NOTHING;
 
 -- ─────────────────────────────────────────
@@ -408,6 +479,39 @@ CREATE TABLE IF NOT EXISTS crawler_stats (
     errors         INT DEFAULT 0,
     recorded_at    TIMESTAMP DEFAULT NOW()
 );
+
+-- ─────────────────────────────────────────
+-- Social Links (Facebook/YouTube/TikTok/Telegram discovered per domain)
+-- Captured by crawler when it finds social media links on a crawled page.
+-- Used by /api/social?domain= to display social links on search result cards.
+-- ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS social_links (
+    id          SERIAL PRIMARY KEY,
+    domain      TEXT NOT NULL,
+    platform    VARCHAR(20) NOT NULL,  -- 'facebook','youtube','tiktok','telegram','twitter','instagram','linkedin'
+    url         TEXT NOT NULL,
+    source_page TEXT,
+    found_at    TIMESTAMP DEFAULT NOW(),
+    UNIQUE(domain, platform, url)
+);
+CREATE INDEX IF NOT EXISTS idx_social_domain   ON social_links(domain);
+CREATE INDEX IF NOT EXISTS idx_social_platform ON social_links(platform);
+
+-- ─────────────────────────────────────────
+-- Click Logs (CTR tracking — feeds back into ranking)
+-- POST /click logs url + query + position when a user clicks a search result.
+-- pages.score is bumped +0.1 per click (capped at 10.0).
+-- ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS click_logs (
+    id         SERIAL PRIMARY KEY,
+    url        TEXT NOT NULL,
+    query      TEXT NOT NULL,
+    position   INT DEFAULT 0,
+    session_id TEXT,
+    clicked_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_clicks_url   ON click_logs(url);
+CREATE INDEX IF NOT EXISTS idx_clicks_query ON click_logs(query, clicked_at DESC);
 
 -- ─────────────────────────────────────────
 -- Crawler Live Counter (was missing in v2.0)
