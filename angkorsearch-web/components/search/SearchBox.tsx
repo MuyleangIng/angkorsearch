@@ -1,8 +1,8 @@
 'use client'
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useSuggest } from '@/hooks/useSuggest'
+import { useSuggest, getRecentSearches, saveRecentSearch, clearRecentSearches } from '@/hooks/useSuggest'
 import type { TabId } from '@/types'
 
 interface Props {
@@ -13,18 +13,30 @@ interface Props {
 }
 
 export default function SearchBox({ initialValue = '', currentTab = 'all', compact = false, onSearch }: Props) {
-  const router  = useRouter()
+  const router   = useRouter()
   const inputRef = useRef<HTMLInputElement>(null)
-  const [value, setValue]     = useState(initialValue)
-  const [focused, setFocused] = useState(false)
-  const { suggestions, clear } = useSuggest(value)
+  const [value, setValue]        = useState(initialValue)
+  const [focused, setFocused]    = useState(false)
+  const [activeIndex, setActive] = useState(-1)
+  const [recents, setRecents]    = useState<string[]>([])
+  const { suggestions, clear }   = useSuggest(value)
 
-  const showSug = focused && suggestions.length > 0
+  // Reload recents whenever the dropdown opens
+  useEffect(() => {
+    if (focused) setRecents(getRecentSearches())
+  }, [focused])
+
+  const showRecent = focused && value === '' && recents.length > 0
+  const showSug    = focused && value !== '' && suggestions.length > 0
+  const items      = showRecent ? recents : showSug ? suggestions : []
+  const showPanel  = items.length > 0
 
   function submit(q: string) {
     if (!q.trim()) return
+    saveRecentSearch(q.trim())
     clear()
     setFocused(false)
+    setActive(-1)
     if (onSearch) {
       onSearch(q)
     } else {
@@ -33,8 +45,38 @@ export default function SearchBox({ initialValue = '', currentTab = 'all', compa
   }
 
   function handleKey(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter') submit(value)
-    if (e.key === 'Escape') { setFocused(false); clear() }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActive(i => Math.min(i + 1, items.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActive(i => Math.max(i - 1, -1))
+    } else if (e.key === 'Enter') {
+      if (activeIndex >= 0 && items[activeIndex]) {
+        const sel = items[activeIndex]
+        setValue(sel)
+        submit(sel)
+      } else {
+        submit(value)
+      }
+    } else if (e.key === 'Escape') {
+      setFocused(false)
+      setActive(-1)
+      clear()
+    }
+  }
+
+  function Highlight({ text }: { text: string }) {
+    if (!value || showRecent) return <span>{text}</span>
+    const idx = text.toLowerCase().indexOf(value.toLowerCase())
+    if (idx === -1) return <span>{text}</span>
+    return (
+      <span>
+        {text.slice(0, idx)}
+        <span className="text-blue font-semibold">{text.slice(idx, idx + value.length)}</span>
+        {text.slice(idx + value.length)}
+      </span>
+    )
   }
 
   return (
@@ -55,10 +97,10 @@ export default function SearchBox({ initialValue = '', currentTab = 'all', compa
           ref={inputRef}
           type="text"
           value={value}
-          onChange={e => setValue(e.target.value)}
+          onChange={e => { setValue(e.target.value); setActive(-1) }}
           onKeyDown={handleKey}
           onFocus={() => setFocused(true)}
-          onBlur={() => setTimeout(() => setFocused(false), 200)}
+          onBlur={() => setTimeout(() => { setFocused(false); setActive(-1) }, 200)}
           placeholder={compact ? 'Search…' : 'ស្វែងរក · Search Cambodia, Khmer, Anime…'}
           className={`
             flex-1 bg-transparent outline-none text-content placeholder:text-muted min-w-0
@@ -71,7 +113,7 @@ export default function SearchBox({ initialValue = '', currentTab = 'all', compa
         {/* Clear */}
         {value && (
           <button
-            onClick={() => { setValue(''); inputRef.current?.focus() }}
+            onClick={() => { setValue(''); setActive(-1); inputRef.current?.focus() }}
             className="text-muted hover:text-content transition-colors p-1 rounded-full hover:bg-hover"
           >
             <svg viewBox="0 0 24 24" width={16} height={16}>
@@ -110,26 +152,51 @@ export default function SearchBox({ initialValue = '', currentTab = 'all', compa
         </button>
       </div>
 
-      {/* Suggestions dropdown */}
+      {/* Dropdown */}
       <AnimatePresence>
-        {showSug && (
+        {showPanel && (
           <motion.div
             className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-2xl shadow-2xl shadow-black/50 overflow-hidden z-50"
             initial={{ opacity: 0, y: -6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
-            transition={{ duration: 0.15 }}
+            transition={{ duration: 0.12 }}
           >
-            {suggestions.map((s, i) => (
+            {/* Recents header */}
+            {showRecent && (
+              <div className="flex items-center justify-between px-4 py-2 border-b border-border/50">
+                <span className="text-xs text-muted font-medium">Recent searches</span>
+                <button
+                  onMouseDown={() => { clearRecentSearches(); setRecents([]) }}
+                  className="text-xs text-blue hover:underline"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+
+            {items.map((s, i) => (
               <div
                 key={i}
-                className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-hover transition-colors text-content text-sm font-khmer"
                 onMouseDown={() => { setValue(s); submit(s) }}
+                onMouseEnter={() => setActive(i)}
+                className={`
+                  flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors text-content text-sm font-khmer
+                  ${activeIndex === i ? 'bg-hover' : 'hover:bg-hover'}
+                `}
               >
-                <svg className="text-muted flex-shrink-0" viewBox="0 0 24 24" width={14} height={14}>
-                  <path d="M15.5 14h-.79l-.28-.27A6.5 6.5 0 1 0 14 15.5l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" fill="currentColor" />
-                </svg>
-                {s}
+                {showRecent ? (
+                  /* History clock icon */
+                  <svg className="text-muted flex-shrink-0" viewBox="0 0 24 24" width={14} height={14}>
+                    <path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z" fill="currentColor" />
+                  </svg>
+                ) : (
+                  /* Search icon */
+                  <svg className="text-muted flex-shrink-0" viewBox="0 0 24 24" width={14} height={14}>
+                    <path d="M15.5 14h-.79l-.28-.27A6.5 6.5 0 1 0 14 15.5l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" fill="currentColor" />
+                  </svg>
+                )}
+                <Highlight text={s} />
               </div>
             ))}
           </motion.div>

@@ -1,5 +1,5 @@
 'use client'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import Header from '@/components/layout/Header'
 import Footer from '@/components/layout/Footer'
@@ -9,9 +9,15 @@ import type { TabId, SearchResult } from '@/types'
 
 export default function SearchPage() {
   const params = useSearchParams()
+  const router = useRouter()
   const query  = params.get('q')    ?? ''
   const tab    = (params.get('tab') ?? 'all') as TabId
   const page   = Number(params.get('page') ?? '1')
+
+  // Redirect github tab to the feed page
+  useEffect(() => {
+    if (tab === 'github') router.replace('/feed')
+  }, [tab, router])
   const [lang, setLang]             = useState(params.get('lang') ?? '')
   const [panelResult, setPanelResult] = useState<SearchResult | null>(null)
 

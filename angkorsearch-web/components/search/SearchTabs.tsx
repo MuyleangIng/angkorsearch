@@ -12,6 +12,11 @@ export default function SearchTabs({ current, query }: Props) {
   const router = useRouter()
 
   function go(tab: TabId) {
+    // GitHub tab → redirect to the Dev & Tech feed page
+    if (tab === 'github') {
+      router.push('/feed')
+      return
+    }
     router.push(`/search?q=${encodeURIComponent(query)}&tab=${tab}`)
   }
 

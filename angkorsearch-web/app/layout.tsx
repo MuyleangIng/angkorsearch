@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Noto_Sans, Noto_Sans_Khmer } from 'next/font/google'
 import { ThemeProvider } from '@/lib/theme'
+import { AuthProvider } from '@/lib/AuthContext'
 import './globals.css'
 
 const notoSans = Noto_Sans({
@@ -39,7 +40,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="km" className={`dark ${notoSans.variable} ${notoSansKhmer.variable}`} suppressHydrationWarning>
       <body className="min-h-screen flex flex-col">
         <ThemeProvider>
-          {children}
+          <AuthProvider>
+            {children}
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>

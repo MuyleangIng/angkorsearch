@@ -1,17 +1,35 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import SearchBox from '@/components/search/SearchBox'
 import StatsBar from '@/components/widgets/StatsBar'
 import DiscoverFeed from '@/components/widgets/DiscoverFeed'
 import ThemeToggle from '@/components/ui/ThemeToggle'
+import { useAuth } from '@/lib/AuthContext'
 import { QUICK_SEARCHES } from '@/lib/constants'
 
 export default function HomePage() {
   const router = useRouter()
+  const params = useSearchParams()
+  const { user, refresh } = useAuth()
   const [mounted, setMounted] = useState(false)
+  const [banner, setBanner] = useState<string | null>(null)
 
   useEffect(() => { setMounted(true) }, [])
+
+  // handle OAuth/register redirect params
+  useEffect(() => {
+    const registered = params.get('registered')
+    const loginSuccess = params.get('login')
+    if (registered === 'true') {
+      setBanner('Account created! Welcome to AngkorSearch.')
+      refresh()
+    } else if (loginSuccess === 'success') {
+      setBanner('Signed in successfully!')
+      refresh()
+    }
+  }, [params, refresh])
 
   function handleSearch(q: string) {
     if (q.trim()) router.push(`/search?q=${encodeURIComponent(q.trim())}&tab=all&page=1`)
@@ -19,6 +37,14 @@ export default function HomePage() {
 
   return (
     <main className="flex flex-col min-h-screen bg-primary">
+      {/* Banner */}
+      {banner && (
+        <div className="bg-blue/10 border-b border-blue/20 text-blue text-sm text-center py-2 px-4">
+          {banner}
+          <button onClick={() => setBanner(null)} className="ml-3 text-blue/60 hover:text-blue text-xs">✕</button>
+        </div>
+      )}
+
       {/* Hero */}
       <section className="flex flex-col items-center justify-center flex-1 px-4 pt-20 pb-10">
         {/* Logo */}
@@ -74,8 +100,27 @@ export default function HomePage() {
           </span>
           <div className="flex items-center gap-4">
             <ThemeToggle />
+            <Link href="/feed" className="hover:text-content transition-colors">Dev Feed</Link>
+            <Link href="/bookmarks" className="hover:text-content transition-colors">Bookmarks</Link>
+            <Link href="/settings" className="hover:text-content transition-colors">Settings</Link>
             <a href="/about" className="hover:text-content transition-colors">About</a>
-            <a href="/admin" className="hover:text-content transition-colors">Admin</a>
+            {user?.role === 'admin' && (
+              <a href="/admin" className="hover:text-content transition-colors">Admin</a>
+            )}
+            {user ? (
+              <Link href="/profile" className="flex items-center gap-1.5 hover:text-content transition-colors">
+                {user.avatar_url ? (
+                  <img src={user.avatar_url} alt={user.username} className="w-5 h-5 rounded-full object-cover" />
+                ) : (
+                  <div className="w-5 h-5 rounded-full bg-blue/20 flex items-center justify-center text-blue text-[10px] font-bold">
+                    {(user.username?.[0] ?? user.email[0]).toUpperCase()}
+                  </div>
+                )}
+                {user.username ?? 'Profile'}
+              </Link>
+            ) : (
+              <Link href="/login" className="text-blue hover:underline">Sign in</Link>
+            )}
           </div>
         </div>
       </footer>

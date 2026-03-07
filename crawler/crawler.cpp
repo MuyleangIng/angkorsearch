@@ -431,13 +431,27 @@ class Worker {
         return {url,qtype};
     }
 
-    // Add a URL to the crawl queue if it hasn't been visited and passes the domain filter.
-    // priority: lower number = crawled sooner (1=high, 9=low)
+    // Returns true if a domain is a social media walled garden that requires login
+    // and returns no useful HTML content to crawlers.
+    bool isWalledGarden(const std::string& domain) {
+        static const std::vector<std::string> blocked = {
+            "facebook.com","fb.com","instagram.com","tiktok.com",
+            "twitter.com","x.com","snapchat.com","whatsapp.com",
+            "mail.google.com","accounts.google.com","login.",
+            "signin.","auth.","oauth."
+        };
+        for (const auto& b : blocked) if (domain.find(b)!=std::string::npos) return true;
+        return false;
+    }
+
+    // Add a URL to the crawl queue if it hasn't been visited.
+    // Priority scheme: Cambodian=3 (high), GitHub=4, all other public sites=7 (low)
+    // Walled-garden social networks are blocked entirely (they return login pages).
     void enqueue(const std::string& url, const std::string& source, int depth, int priority=5, const std::string& qtype="web") {
         if (depth>cfg.maxDepth || isVisited(url)) return;
         std::string domain=extractDomain(url);
-        // Only enqueue Cambodian domains or GitHub repos — ignore everything else
-        if (!isCambodianDomain(domain) && domain.find("github.com")==std::string::npos) return;
+        // Block social login walls — they return no useful content to crawlers
+        if (isWalledGarden(domain)) return;
         std::string depthStr=std::to_string(depth), prioStr=std::to_string(priority);
         const char* p[6]={url.c_str(),domain.c_str(),source.c_str(),qtype.c_str(),prioStr.c_str(),depthStr.c_str()};
         PQexecParams(db,
@@ -580,10 +594,9 @@ public:
             if (pageType=="news" && !page.title.empty())
                 saveNews(url, page, lang);
 
-            // Save page images (only if the image or page domain is Cambodian)
+            // Save page images from any crawled page
             for (const auto& [imgUrl, alt] : page.images)
-                if (isCambodianDomain(extractDomain(imgUrl)) || isCambodianDomain(domain))
-                    saveImage(imgUrl, url, alt, lang);
+                saveImage(imgUrl, url, alt, lang);
 
             // Also index the Open Graph featured image
             if (!page.ogImage.empty())
@@ -597,10 +610,11 @@ public:
             addSuggestion(page.title.substr(0, 80), lang);
 
             // Enqueue outbound links for future crawling.
-            // Cambodian domains get priority 3 (high), others get 7 (low).
+            // Priority: Cambodian=3, GitHub=4, all other public sites=7
             for (const auto& link : page.links) {
                 std::string ld=extractDomain(link);
-                enqueue(link, url, 1, isCambodianDomain(ld)?3:7, "web");
+                int lp = isCambodianDomain(ld) ? 3 : (ld.find("github.com")!=std::string::npos ? 4 : 7);
+                enqueue(link, url, 1, lp, "web");
             }
 
             // Progress log every 25 pages per worker

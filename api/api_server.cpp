@@ -65,6 +65,105 @@ static size_t curlWriteCb(char* ptr, size_t size, size_t nmemb, std::string* dat
     return size * nmemb;
 }
 
+// GET a URL (used for force-crawl now endpoint)
+std::string httpGet(const std::string& url, long timeout=20) {
+    CURL* c = curl_easy_init();
+    if (!c) return "";
+    std::string resp;
+    curl_easy_setopt(c, CURLOPT_URL,            url.c_str());
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION,  curlWriteCb);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA,      &resp);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT,        timeout);
+    curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(c, CURLOPT_MAXREDIRS,      5L);
+    curl_easy_setopt(c, CURLOPT_USERAGENT,
+        "AngkorSearchBot/2.2 (+https://angkorsearch.com.kh/bot)");
+    struct curl_slist* h = nullptr;
+    h = curl_slist_append(h, "Accept: text/html,application/xhtml+xml");
+    curl_easy_setopt(c, CURLOPT_HTTPHEADER, h);
+    CURLcode res = curl_easy_perform(c);
+    long code = 0;
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+    curl_slist_free_all(h);
+    curl_easy_cleanup(c);
+    if (res != CURLE_OK || (code != 200 && code != 301 && code != 302)) return "";
+    return resp;
+}
+
+// ── Simple HTML helpers for inline crawl ────────────────────────────────────
+// Extract content of first matching tag pair, e.g. <title>...</title>
+static std::string htmlTagContent(const std::string& html, const std::string& tag) {
+    std::string open = "<" + tag, close = "</" + tag + ">";
+    auto s = html.find(open);
+    if (s == std::string::npos) return "";
+    auto e = html.find('>', s);
+    if (e == std::string::npos) return "";
+    auto end = html.find(close, e + 1);
+    if (end == std::string::npos) return "";
+    std::string v = html.substr(e + 1, end - e - 1);
+    while (!v.empty() && (v.front()==' '||v.front()=='\n'||v.front()=='\r')) v.erase(v.begin());
+    while (!v.empty() && (v.back()==' '||v.back()=='\n'||v.back()=='\r')) v.pop_back();
+    return v;
+}
+
+// Extract content= from a <meta name="X" content="Y"> or <meta property="X" content="Y">
+static std::string htmlMetaContent(const std::string& html, const std::string& name) {
+    for (const std::string& attr : {"name=\""+name+"\"", "name='"+name+"'",
+                                    "property=\""+name+"\"", "property='"+name+'"'}) {
+        auto pos = html.find(attr);
+        if (pos == std::string::npos) continue;
+        auto tagStart = html.rfind('<', pos);
+        auto tagEnd   = html.find('>', pos);
+        if (tagStart == std::string::npos || tagEnd == std::string::npos) continue;
+        std::string tag = html.substr(tagStart, tagEnd - tagStart);
+        for (const std::string& ca : {"content=\"", "content='"}) {
+            auto cs = tag.find(ca);
+            if (cs == std::string::npos) continue;
+            cs += ca.size();
+            char delim = ca.back();
+            auto ce = tag.find(delim, cs);
+            if (ce != std::string::npos) return tag.substr(cs, ce - cs);
+        }
+    }
+    return "";
+}
+
+// Strip HTML tags, collapse whitespace → plain text
+static std::string htmlToText(const std::string& html) {
+    std::string out;
+    out.reserve(html.size() / 2);
+    bool inTag=false, inScript=false, inStyle=false;
+    for (size_t i = 0; i < html.size(); i++) {
+        if (html[i] == '<') {
+            auto sub = [&](const char* s){ return html.compare(i, strlen(s), s)==0; };
+            if (sub("<script")||sub("<SCRIPT")) inScript=true;
+            else if (sub("<style")||sub("<STYLE")) inStyle=true;
+            else if (sub("</script>")||sub("</SCRIPT>")) inScript=false;
+            else if (sub("</style>")||sub("</STYLE>")) inStyle=false;
+            inTag=true;
+        } else if (html[i]=='>') {
+            inTag=false; if (!inScript&&!inStyle) out+=' ';
+        } else if (!inTag&&!inScript&&!inStyle) {
+            out+=html[i];
+        }
+    }
+    // decode basic entities
+    auto rep=[](std::string& s,const char* f,const char* t){
+        size_t p=0; size_t fl=strlen(f); size_t tl=strlen(t);
+        while((p=s.find(f,p))!=std::string::npos){s.replace(p,fl,t);p+=tl;}
+    };
+    rep(out,"&amp;","&"); rep(out,"&lt;","<"); rep(out,"&gt;",">");
+    rep(out,"&quot;","\""); rep(out,"&#39;","'"); rep(out,"&nbsp;"," ");
+    // collapse whitespace
+    std::string result; bool sp=true;
+    for (char c : out) {
+        bool ws=(c==' '||c=='\n'||c=='\r'||c=='\t');
+        if (ws) { if (!sp) { result+=' '; sp=true; } }
+        else { result+=c; sp=false; }
+    }
+    return result;
+}
+
 // POST JSON to a URL (used for Ollama API calls)
 std::string httpPost(const std::string& url, const std::string& body, long timeout=60) {
     CURL* c = curl_easy_init();
@@ -279,8 +378,15 @@ public:
         return {200,json};
     }
 
-    // ── /search — fixed: 'simple' FTS dict + ILIKE fallback ──
-    // Now "cam" matches "cambodia", Khmer text tokenizes correctly
+    // ── /search — multi-strategy query expansion (like Google/Naver) ──
+    // Strategy:
+    //  1. FTS  — full-text search (simple dict, handles word boundaries)
+    //  2. Trigram similarity — title % $1 (pg_trgm, fuzzy: "muyleang"~"muyleanging")
+    //  3. URL search — url ILIKE $2  (finds github.com/muyleanging by searching "muyleanging")
+    //  4. Query expansion — prefix/suffix variants of long words:
+    //       "muyleanging"(11) → prefix "muyleang"(7) + suffix "leanging"(7)
+    //  5. Per-word ILIKE — each word in multi-word queries searched independently
+    //  6. Ranking boost — URL match, title match, trigram score, FTS rank combined
     Res search(const Req& req) {
         std::string q=param(req,"q"), type=param(req,"type","web"), lang=param(req,"lang");
         int page=std::stoi(param(req,"page","1")), limit=10, offset=(page-1)*limit;
@@ -295,19 +401,42 @@ public:
         PGresult* res=nullptr;
         std::string json;
 
-        // ILIKE pattern: use first keyword so "angkor wat" → "%angkor%"
-        // This gives much better recall than requiring the full phrase as substring
-        std::string firstWord = q;
-        auto spPos = q.find(' ');
-        if (spPos != std::string::npos) firstWord = q.substr(0, spPos);
-        std::string likeP = "%" + firstWord + "%";
+        // ── Query expansion ─────────────────────────────────────────────────
+        // Lower-case first word for prefix/suffix generation
+        std::string fw=q; { auto sp=q.find(' '); if(sp!=std::string::npos) fw=q.substr(0,sp); }
+        for(auto& c:fw) c=tolower(c);
+
+        // Full-query ILIKE (e.g. "%muyleanging%")
+        std::string likeQ="%"+q+"%";
+        // First-word ILIKE (e.g. "%muyleang%") — useful for multi-word queries
+        std::string likeW="%"+fw+"%";
+        // Prefix variant: first ~65% of long words (e.g. "muyleang" from "muyleanging")
+        std::string likeP=likeW;
+        if(fw.size()>=6){
+            size_t n=std::max((size_t)4,(size_t)(fw.size()*65/100));
+            likeP="%"+fw.substr(0,n)+"%";
+        }
+        // Suffix variant: last ~60% of long words (e.g. "leanging" from "muyleanging")
+        std::string likeS=likeW;
+        if(fw.size()>=7){
+            size_t n=std::max((size_t)4,(size_t)(fw.size()*60/100));
+            likeS="%"+fw.substr(fw.size()-n)+"%";
+        }
+        // Second word ILIKE for two-word queries (e.g. "ing" from "muyleang ing")
+        std::string likeW2=likeW;
+        { auto sp=q.find(' ');
+          if(sp!=std::string::npos){
+              std::string w2=q.substr(sp+1); for(auto&c:w2) c=tolower(c);
+              if(w2.size()>=3) likeW2="%"+w2+"%";
+          }
+        }
 
         if(type=="image") {
-            const char* p[4]={q.c_str(),likeP.c_str(),std::to_string(limit).c_str(),std::to_string(offset).c_str()};
+            const char* p[4]={q.c_str(),likeW.c_str(),std::to_string(limit).c_str(),std::to_string(offset).c_str()};
             res=PQexecParams(d,
                 "SELECT url,page_url,alt_text,domain,file_type FROM images "
                 "WHERE (to_tsvector('simple',coalesce(alt_text,'')||' '||coalesce(title,'')) @@ plainto_tsquery('simple',$1) "
-                "  OR alt_text ILIKE $2 OR title ILIKE $2) "
+                "  OR alt_text ILIKE $2 OR title ILIKE $2 OR page_url ILIKE $2) "
                 "ORDER BY crawled_at DESC LIMIT $3::int OFFSET $4::int",
                 4,nullptr,p,nullptr,nullptr,0);
             json="{\"type\":\"image\",\"results\":[";
@@ -316,11 +445,11 @@ public:
             json+="],\"count\":"+std::to_string(rows)+"}";
 
         } else if(type=="video") {
-            const char* p[4]={q.c_str(),likeP.c_str(),std::to_string(limit).c_str(),std::to_string(offset).c_str()};
+            const char* p[4]={q.c_str(),likeW.c_str(),std::to_string(limit).c_str(),std::to_string(offset).c_str()};
             res=PQexecParams(d,
                 "SELECT url,embed_url,thumb_url,title,description,channel FROM videos "
                 "WHERE (to_tsvector('simple',coalesce(title,'')||' '||coalesce(description,'')) @@ plainto_tsquery('simple',$1) "
-                "  OR title ILIKE $2) "
+                "  OR title ILIKE $2 OR description ILIKE $2) "
                 "ORDER BY crawled_at DESC LIMIT $3::int OFFSET $4::int",
                 4,nullptr,p,nullptr,nullptr,0);
             json="{\"type\":\"video\",\"results\":[";
@@ -329,11 +458,13 @@ public:
             json+="],\"count\":"+std::to_string(rows)+"}";
 
         } else if(type=="github") {
-            const char* p[4]={q.c_str(),likeP.c_str(),std::to_string(limit).c_str(),std::to_string(offset).c_str()};
+            // Also search owner name, full_name, and repo_url
+            const char* p[4]={q.c_str(),likeW.c_str(),std::to_string(limit).c_str(),std::to_string(offset).c_str()};
             res=PQexecParams(d,
                 "SELECT repo_url,name,full_name,description,language,stars,forks,owner FROM github_repos "
-                "WHERE (to_tsvector('simple',coalesce(name,'')||' '||coalesce(description,'')) @@ plainto_tsquery('simple',$1) "
-                "  OR name ILIKE $2 OR description ILIKE $2) "
+                "WHERE (to_tsvector('simple',coalesce(name,'')||' '||coalesce(description,'')||' '||coalesce(owner,'')) @@ plainto_tsquery('simple',$1) "
+                "  OR name ILIKE $2 OR full_name ILIKE $2 OR owner ILIKE $2"
+                "  OR description ILIKE $2 OR repo_url ILIKE $2) "
                 "ORDER BY stars DESC LIMIT $3::int OFFSET $4::int",
                 4,nullptr,p,nullptr,nullptr,0);
             json="{\"type\":\"github\",\"results\":[";
@@ -342,7 +473,7 @@ public:
             json+="],\"count\":"+std::to_string(rows)+"}";
 
         } else if(type=="news") {
-            std::vector<std::string> pv={q,likeP,std::to_string(limit),std::to_string(offset)};
+            std::vector<std::string> pv={q,likeW,std::to_string(limit),std::to_string(offset)};
             std::string sql=
                 "SELECT url,title,description,image_url,source,published_at FROM news "
                 "WHERE (to_tsvector('simple',coalesce(title,'')||' '||coalesce(description,'')) @@ plainto_tsquery('simple',$1) "
@@ -357,19 +488,61 @@ public:
             json+="],\"count\":"+std::to_string(rows)+"}";
 
         } else {
-            // Web search — 'simple' FTS + ILIKE fallback, ranked by relevance
-            std::vector<std::string> pv={q,likeP,std::to_string(limit),std::to_string(offset)};
+            // ── Web / All — full expanded search ──────────────────────────────
+            // Params: $1=q  $2=likeW(firstWord)  $3=limit  $4=offset
+            //         $5=likeP(prefix)  $6=likeS(suffix)  $7=likeW2(word2)
+            //         $8=likeQ(fullQuery)  [$9=lang if set]
+            std::vector<std::string> pv={q,likeW,std::to_string(limit),std::to_string(offset),
+                                          likeP,likeS,likeW2,likeQ};
             std::string sql=
                 "SELECT id,url,title,description,"
-                "ts_headline('simple',coalesce(content,''),plainto_tsquery('simple',$1),'MaxWords=30,MinWords=15,StartSel=<b>,StopSel=</b>') AS snippet,"
+                "ts_headline('simple',coalesce(content,''),plainto_tsquery('simple',$1),"
+                "  'MaxWords=30,MinWords=15,StartSel=<b>,StopSel=</b>') AS snippet,"
                 "language,page_type,"
-                "ts_rank(to_tsvector('simple',coalesce(title,'')||' '||coalesce(description,'')||' '||coalesce(content,'')),plainto_tsquery('simple',$1)) AS rank "
+                // ── Combined relevance score ──────────────────────────────────
+                "("
+                // FTS rank (highest weight — exact token match)
+                " COALESCE(ts_rank(to_tsvector('simple',"
+                "   coalesce(title,'')||' '||coalesce(description,'')||' '||coalesce(content,'')),"
+                "   plainto_tsquery('simple',$1)),0) * 3.0"
+                // Trigram similarity on title (pg_trgm — catches "muyleang"~"muyleanging")
+                "+ CASE WHEN title % $1 THEN 1.2 ELSE 0.0 END"
+                // URL contains query — very strong signal for personal pages/profiles
+                "+ CASE WHEN lower(url) LIKE lower($8) THEN 1.5 ELSE"
+                "   CASE WHEN lower(url) LIKE lower($2) THEN 1.0 ELSE"
+                "   CASE WHEN lower(url) LIKE lower($5) THEN 0.6 ELSE 0.0 END END END"
+                // Title match signals
+                "+ CASE WHEN title ILIKE $8 THEN 0.8 ELSE"
+                "   CASE WHEN title ILIKE $2 THEN 0.5 ELSE"
+                "   CASE WHEN title ILIKE $5 THEN 0.3 ELSE 0.0 END END END"
+                // Description match
+                "+ CASE WHEN description ILIKE $8 THEN 0.2 ELSE"
+                "   CASE WHEN description ILIKE $2 THEN 0.1 ELSE 0.0 END END"
+                ") AS rank "
                 "FROM pages WHERE ("
-                "to_tsvector('simple',coalesce(title,'')||' '||coalesce(description,'')||' '||coalesce(content,''))"
-                " @@ plainto_tsquery('simple',$1)"
-                " OR title ILIKE $2 OR description ILIKE $2 OR content ILIKE $2"
+                // 1. Full-text search (token-based, fast GIN index)
+                " to_tsvector('simple',coalesce(title,'')||' '||coalesce(description,'')||' '||coalesce(content,''))"
+                "   @@ plainto_tsquery('simple',$1)"
+                // 2. Trigram fuzzy on title (pg_trgm GIN index)
+                " OR title % $1"
+                // 3. URL search — key for name/username searches
+                " OR lower(url) LIKE lower($8)"
+                " OR lower(url) LIKE lower($2)"
+                " OR lower(url) LIKE lower($5)"
+                // 4. Title/desc with full query
+                " OR title       ILIKE $8 OR description ILIKE $8"
+                // 5. Title with first-word and prefix/suffix variants
+                " OR title       ILIKE $2 OR title       ILIKE $5 OR title       ILIKE $6"
+                // 6. Description with first-word variant
+                " OR description ILIKE $2 OR description ILIKE $5"
+                // 7. Second word in multi-word queries
+                " OR title       ILIKE $7 OR description ILIKE $7"
+                // 8. Content substring (most expensive, but covers body text)
+                " OR content     ILIKE $8 OR content     ILIKE $2"
+                // 9. Domain name search
+                " OR domain      ILIKE $2"
                 ") ";
-            if(!lang.empty()){sql+="AND language=$5 ";pv.push_back(lang);}
+            if(!lang.empty()){sql+="AND language=$9 ";pv.push_back(lang);}
             sql+="ORDER BY rank DESC NULLS LAST, updated_at DESC LIMIT $3::int OFFSET $4::int";
             std::vector<const char*> pp; for(auto& s:pv) pp.push_back(s.c_str());
             res=PQexecParams(d,sql.c_str(),(int)pp.size(),nullptr,pp.data(),nullptr,nullptr,0);
@@ -935,11 +1108,151 @@ public:
         auto* d = db();
         const char* p[3] = {url.c_str(), domain.c_str(), type.c_str()};
         PQexecParams(d,
-            "INSERT INTO crawl_queue (url, domain, queue_type, priority) VALUES ($1, $2, $3, 1) "
-            "ON CONFLICT (url) DO UPDATE SET crawled=FALSE, crawled_at=NULL, priority=1",
+            // priority=0 beats all seeds (priority>=1) — absolute front of queue
+            "INSERT INTO crawl_queue (url, domain, queue_type, priority) VALUES ($1, $2, $3, 0) "
+            "ON CONFLICT (url) DO UPDATE SET crawled=FALSE, crawled_at=NULL, priority=0",
             3, nullptr, p, nullptr, nullptr, 0);
         PQfinish(d);
+        // Also purge from Redis visited set — crawlers skip URLs already in visited,
+        // so without this SREM the URL would be claimed from the DB but never fetched.
+        auto* r = rc();
+        if (r && !r->err) {
+            redisReply* rep = (redisReply*)redisCommand(r, "SREM visited %s", url.c_str());
+            freeReplyObject(rep);
+            redisFree(r);
+        }
         return {200, R"({"ok":true})"};
+    }
+
+    // ── POST /admin/crawl-now — directly fetch, parse and index a URL (bypasses crawler queue) ──
+    Res crawlNow(const Req& req) {
+        auto b = parseQuery(req.body);
+        std::string url  = b.count("url") ? b.at("url") : "";
+        if (url.empty()) return {400, R"({"error":"url required"})"};
+
+        // Extract domain
+        std::string domain = url;
+        auto se = domain.find("://");
+        if (se != std::string::npos) domain = domain.substr(se + 3);
+        auto sl = domain.find('/');
+        if (sl != std::string::npos) domain = domain.substr(0, sl);
+
+        // Fetch the page
+        std::string html = httpGet(url);
+        if (html.empty()) {
+            return {502, "{\"error\":\"fetch_failed\",\"msg\":\"Could not fetch the URL. "
+                         "The server may be unreachable or returned a non-200 status.\"}"};
+        }
+
+        // Parse
+        std::string title = htmlTagContent(html, "title");
+        if (title.empty()) title = htmlTagContent(html, "TITLE");
+        std::string desc  = htmlMetaContent(html, "description");
+        if (desc.empty()) desc = htmlMetaContent(html, "og:description");
+        std::string text  = htmlToText(html);
+        if (text.size() > 80000) text.resize(80000);
+
+        // Detect language (Khmer Unicode U+1780–U+17FF → UTF-8 E1 9E/9F xx)
+        std::string lang = "en";
+        for (size_t i = 0; i + 2 < text.size(); i++) {
+            unsigned char a=(unsigned char)text[i], b2=(unsigned char)text[i+1];
+            if (a==0xE1 && (b2==0x9E||b2==0x9F)) { lang="km"; break; }
+        }
+
+        // Page type
+        std::string pageType = "web";
+        if (domain.find("github.com") != std::string::npos) pageType = "github";
+        else if (url.find("/news")!=std::string::npos||url.find("article")!=std::string::npos) pageType="news";
+
+        int wc = (int)std::count(text.begin(), text.end(), ' ');
+        std::string wcStr = std::to_string(wc);
+
+        // Save to pages
+        auto* d = db();
+        const char* pp[8]={url.c_str(),domain.c_str(),title.c_str(),desc.c_str(),
+                            lang.c_str(),text.c_str(),wcStr.c_str(),pageType.c_str()};
+        PGresult* pr = PQexecParams(d,
+            "INSERT INTO pages (url,domain,title,description,language,content,word_count,page_type) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7::int,$8) "
+            "ON CONFLICT (url) DO UPDATE SET "
+            "title=$3,description=$4,language=$5,content=$6,word_count=$7::int,updated_at=NOW()",
+            8,nullptr,pp,nullptr,nullptr,0);
+        bool saved = (PQresultStatus(pr)==PGRES_COMMAND_OK);
+        PQclear(pr);
+
+        // Mark crawled in queue
+        const char* qp[3]={url.c_str(),domain.c_str(),"web"};
+        PQexecParams(d,
+            "INSERT INTO crawl_queue (url,domain,queue_type,priority,crawled,crawled_at) "
+            "VALUES ($1,$2,$3,0,TRUE,NOW()) "
+            "ON CONFLICT (url) DO UPDATE SET crawled=TRUE,crawled_at=NOW(),priority=0",
+            3,nullptr,qp,nullptr,nullptr,0);
+        PQfinish(d);
+
+        // Mark visited in Redis
+        auto* r = rc();
+        if (r && !r->err) {
+            redisReply* rep=(redisReply*)redisCommand(r,"SADD visited %s",url.c_str());
+            freeReplyObject(rep); redisFree(r);
+        }
+
+        if (!saved) return {500,R"({"error":"db_error","msg":"Page fetched but failed to save to database."})"};
+
+        std::string json = "{\"ok\":true,"
+            "\"title\":"    + (title.empty()?"\"(no title)\"":"\""+je(title)+"\"") + ","
+            "\"desc\":"     + (desc.empty()?"\"\"":"\""+je(desc.size()>200?desc.substr(0,200):desc)+"\"") + ","
+            "\"lang\":\""   + je(lang) + "\","
+            "\"type\":\""   + je(pageType) + "\","
+            "\"words\":"    + wcStr + ","
+            "\"chars\":"    + std::to_string(text.size()) + "}";
+        return {200, json};
+    }
+
+    // ── GET /admin/crawl-status?url=... — check crawl queue + pages for a specific URL ──
+    Res crawlStatus(const Req& req) {
+        std::string url = param(req, "url");
+        if (url.empty()) return {400, R"({"error":"url required"})"};
+
+        auto* d = db();
+        const char* p[1] = {url.c_str()};
+
+        // Check crawl_queue
+        PGresult* qr = PQexecParams(d,
+            "SELECT crawled, priority, added_at, crawled_at FROM crawl_queue WHERE url=$1",
+            1, nullptr, p, nullptr, nullptr, 0);
+
+        // Check pages table
+        PGresult* pr = PQexecParams(d,
+            "SELECT title, description, lang, type, updated_at FROM pages WHERE url=$1",
+            1, nullptr, p, nullptr, nullptr, 0);
+
+        std::string json = "{\"url\":\"" + je(url) + "\",";
+
+        bool in_queue = PQntuples(qr) > 0;
+        bool in_pages = PQntuples(pr) > 0;
+
+        if (in_pages) {
+            json += "\"status\":\"done\","
+                    "\"page_title\":\""   + je(PQgetvalue(pr,0,0)) + "\","
+                    "\"page_desc\":\""    + je(PQgetvalue(pr,0,1)) + "\","
+                    "\"page_lang\":\""    + je(PQgetvalue(pr,0,2)) + "\","
+                    "\"page_type\":\""    + je(PQgetvalue(pr,0,3)) + "\","
+                    "\"page_indexed\":\"" + je(PQgetvalue(pr,0,4)) + "\"";
+        } else if (in_queue) {
+            bool crawled = std::string(PQgetvalue(qr,0,0)) == "t";
+            json += "\"status\":\""   + std::string(crawled ? "claimed" : "queued") + "\","
+                    "\"priority\":"   + std::string(PQgetvalue(qr,0,1)) + ","
+                    "\"added_at\":\"" + je(PQgetvalue(qr,0,2)) + "\"";
+            if (crawled) {
+                json += std::string(",\"crawled_at\":\"") + je(PQgetvalue(qr,0,3)) + "\"";
+            }
+        } else {
+            json += "\"status\":\"not_found\"";
+        }
+
+        json += "}";
+        PQclear(qr); PQclear(pr); PQfinish(d);
+        return {200, json};
     }
 
     Res route(const Req& req) {
@@ -954,8 +1267,10 @@ public:
         if(req.path=="/admin/seeds"  && req.method=="POST")   return addSeed(req);
         if(req.path=="/admin/seeds"  && req.method=="PATCH")  return updateSeed(req);
         if(req.path=="/admin/seeds"  && req.method=="DELETE") return deleteSeed(req);
-        if(req.path=="/admin/queue"  && req.method=="POST")   return addToQueue(req);
-        if(req.path=="/admin/system" && req.method=="GET")    return systemStats();
+        if(req.path=="/admin/queue"        && req.method=="POST") return addToQueue(req);
+        if(req.path=="/admin/crawl-now"    && req.method=="POST") return crawlNow(req);
+        if(req.path=="/admin/crawl-status" && req.method=="GET")  return crawlStatus(req);
+        if(req.path=="/admin/system"       && req.method=="GET")  return systemStats();
         if(req.path=="/ai/answer")    return aiAnswer(req);
         if(req.path=="/bookmark"  && req.method=="POST")   return addBookmark(req);
         if(req.path=="/bookmarks" && req.method=="GET")    return getBookmarks(req);

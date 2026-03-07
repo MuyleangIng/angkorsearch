@@ -1,6 +1,7 @@
 'use client'
 import { motion } from 'framer-motion'
 import Badge from '@/components/ui/Badge'
+import BookmarkButton from '@/components/ui/BookmarkButton'
 import { getDomain } from '@/lib/utils'
 import type { SearchResult } from '@/types'
 
@@ -14,7 +15,7 @@ const LANG_COLORS: Record<string, string> = {
 interface Props {
   result: SearchResult
   index:  number
-  onBookmark: (url: string, title: string) => void
+  onBookmark?: (url: string, title: string) => void  // kept for compat, unused
 }
 
 function getSourceIcon(url: string) {
@@ -67,7 +68,7 @@ function getSourceBadge(url: string, result: SearchResult): { label: string; col
   return null
 }
 
-export default function GithubResult({ result, index, onBookmark }: Props) {
+export default function GithubResult({ result, index }: Props) {
   const url       = result.url
   const domain    = getDomain(url)
   const langColor = result.lang ? (LANG_COLORS[result.lang] ?? '#8b949e') : null
@@ -109,12 +110,11 @@ export default function GithubResult({ result, index, onBookmark }: Props) {
                 </span>
               )}
             </div>
-            <button
-              onClick={() => onBookmark(url, title)}
-              className="opacity-0 group-hover:opacity-100 transition-opacity text-muted hover:text-content text-sm flex-shrink-0"
-            >
-              🔖
-            </button>
+            <BookmarkButton
+              url={url}
+              title={title}
+              className="opacity-0 group-hover:opacity-100 flex-shrink-0"
+            />
           </div>
 
           {/* Domain breadcrumb */}

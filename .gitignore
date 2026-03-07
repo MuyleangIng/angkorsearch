@@ -58,3 +58,4 @@ logs/
 *.tmp
 *.swp
 *~
+.env

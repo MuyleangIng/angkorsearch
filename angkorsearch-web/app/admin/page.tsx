@@ -1,9 +1,11 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import ThemeToggle from '@/components/ui/ThemeToggle'
 import { API_URL } from '@/lib/constants'
 import { fetchAdminSystem, updateSeed } from '@/lib/api'
+import { useAuth } from '@/lib/AuthContext'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Overview {
@@ -165,6 +167,18 @@ function InlinePriority({ seed, onUpdate }: { seed: Seed; onUpdate: () => void }
 type TabId = 'overview' | 'seeds' | 'queue' | 'system' | 'searches'
 
 export default function AdminPage() {
+  const { user, loading: authLoading } = useAuth()
+  const router = useRouter()
+
+  // Auth guard — only admins can see this page.
+  // Must wait for authLoading=false before redirecting, otherwise user=null
+  // during the initial getMe() fetch causes an immediate unwanted redirect.
+  useEffect(() => {
+    if (authLoading) return
+    if (!user) router.push('/login?next=/admin')
+    else if (user.role !== 'admin') router.push('/')
+  }, [user, authLoading, router])
+
   const [data,    setData]    = useState<AdminData | null>(null)
   const [seeds,   setSeeds]   = useState<Seed[]>([])
   const [sysData, setSysData] = useState<SystemData | null>(null)
@@ -247,10 +261,13 @@ export default function AdminPage() {
       method: 'POST', body: body.toString(),
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     })
-    setQMsg(res.ok ? 'URL added to crawl queue at Force P1!' : 'Failed to add to queue.')
+    setQMsg(res.ok ? 'URL force-queued at P0 and removed from visited cache!' : 'Failed to add to queue.')
     if (res.ok) { setQUrl(''); loadData() }
     setQLoading(false)
   }
+
+  // Don't render until auth resolves, and never show to non-admins
+  if (authLoading || !user || user.role !== 'admin') return null
 
   const ov = data?.overview
   const sys = sysData
@@ -282,7 +299,13 @@ export default function AdminPage() {
             </svg>
             Refresh
           </button>
-          <Link href="/search?q=Cambodia&tab=all&page=1" className="text-xs bg-blue text-white px-3 py-1.5 rounded-full hover:bg-blue/80 transition-all hidden sm:inline-flex">
+          <Link href="/crawl" className="text-xs bg-blue text-white px-3 py-1.5 rounded-full hover:bg-blue/80 transition-all hidden sm:inline-flex items-center gap-1.5">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+            </svg>
+            Force Crawler
+          </Link>
+          <Link href="/search?q=Cambodia&tab=all&page=1" className="text-xs border border-border text-muted px-3 py-1.5 rounded-full hover:border-blue/50 hover:text-content transition-all hidden sm:inline-flex">
             Open Search
           </Link>
         </div>
@@ -598,7 +621,8 @@ export default function AdminPage() {
             <section className="bg-card border border-border rounded-xl p-5">
               <h2 className="text-sm font-semibold text-content mb-1">Add URL to Crawl Queue</h2>
               <p className="text-xs text-muted mb-4">
-                Force-index a specific URL at <span className="font-bold text-red">Priority 1</span> (immediately).
+                Force-index a specific URL at <span className="font-bold text-red">Priority 0</span> — absolute front of the queue.
+                Also removes the URL from the Redis visited cache so it is always re-fetched, even if previously crawled.
                 Unlike seeds, this is a one-time crawl — the URL is not re-crawled automatically.
               </p>
               <form onSubmit={handleAddQueue} className="flex flex-wrap gap-3 items-end">
@@ -616,8 +640,8 @@ export default function AdminPage() {
                   </select>
                 </div>
                 <div className="flex items-center gap-1.5 px-3 py-2 bg-red/5 border border-red/20 rounded-lg">
-                  <span className="w-2 h-2 rounded-full bg-red" />
-                  <span className="text-xs text-red font-bold">Force P1</span>
+                  <span className="w-2 h-2 rounded-full bg-red animate-pulse" />
+                  <span className="text-xs text-red font-bold">Super Force P0</span>
                 </div>
                 <button type="submit" disabled={qLoading}
                   className="bg-blue text-white text-sm px-5 py-2 rounded-lg hover:bg-blue/80 disabled:opacity-50 font-medium transition-all flex items-center gap-2">

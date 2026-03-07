@@ -1,16 +1,17 @@
 'use client'
 import { motion } from 'framer-motion'
 import Favicon from '@/components/ui/Favicon'
+import BookmarkButton from '@/components/ui/BookmarkButton'
 import { getDomain, getBreadcrumb, highlightQuery } from '@/lib/utils'
 import type { SearchResult } from '@/types'
 
 interface Props {
-  result:     SearchResult
-  query:      string
-  onBookmark: (url: string, title: string) => void
+  result:      SearchResult
+  query:       string
+  onBookmark?: (url: string, title: string) => void  // kept for compat, unused
 }
 
-export default function TopResult({ result, query, onBookmark }: Props) {
+export default function TopResult({ result, query }: Props) {
   const domain  = getDomain(result.url)
   const bc      = getBreadcrumb(result.url)
   const snippet = result.snippet || highlightQuery(result.description?.slice(0, 300) ?? '', query)
@@ -29,12 +30,11 @@ export default function TopResult({ result, query, onBookmark }: Props) {
           <span className="text-content text-sm font-medium">{domain}</span>
           <span className="text-green text-xs ml-2 truncate hidden sm:inline">{bc.slice(0, 60)}</span>
         </div>
-        <button
-          onClick={() => onBookmark(result.url, result.title)}
-          className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity text-muted hover:text-content text-sm px-2 py-1 rounded hover:bg-hover"
-        >
-          🔖
-        </button>
+        <BookmarkButton
+          url={result.url}
+          title={result.title}
+          className="ml-auto opacity-0 group-hover:opacity-100"
+        />
       </div>
 
       {/* Big title */}
