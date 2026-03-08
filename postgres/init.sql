@@ -525,6 +525,20 @@ CREATE TABLE IF NOT EXISTS crawler_live (
 INSERT INTO crawler_live (id, pages_live) VALUES (1, 0) ON CONFLICT (id) DO NOTHING;
 
 -- ─────────────────────────────────────────
+-- Auto-cleanup: delete crawled queue rows older than 2 days
+-- This keeps crawl_queue small so crawler stays fast
+-- Run manually anytime: SELECT cleanup_crawl_queue();
+-- ─────────────────────────────────────────
+CREATE OR REPLACE FUNCTION cleanup_crawl_queue() RETURNS INT AS $$
+DECLARE deleted INT;
+BEGIN
+  DELETE FROM crawl_queue WHERE crawled = TRUE AND crawled_at < NOW() - INTERVAL '2 days';
+  GET DIAGNOSTICS deleted = ROW_COUNT;
+  RETURN deleted;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ─────────────────────────────────────────
 -- Views
 -- ─────────────────────────────────────────
 CREATE OR REPLACE VIEW v_crawl_status AS

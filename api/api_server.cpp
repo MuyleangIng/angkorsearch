@@ -42,6 +42,7 @@ struct Config {
     std::string ollamaHost="http://ollama:11434";
     std::string ollamaModel="qwen2.5:3b";
     int redisPort=6379, apiPort=8080;
+    bool aiEnabled=false;
     Config() {
         auto e=[](const char* k,const char* d){ const char* v=std::getenv(k); return v?std::string(v):std::string(d); };
         dbHost      = e("DB_HOST","postgres");
@@ -54,6 +55,7 @@ struct Config {
         apiPort     = std::stoi(e("API_PORT","8080"));
         ollamaHost  = e("OLLAMA_HOST","http://ollama:11434");
         ollamaModel = e("OLLAMA_MODEL","qwen2.5:3b");
+        aiEnabled   = e("AI_ENABLED","false") == "true";
     }
 };
 
@@ -501,14 +503,14 @@ public:
                                           likeP,likeS,likeW2,likeQ,lang,dateFrom};
             std::string sql=
                 "SELECT id,url,title,description,"
-                "ts_headline('simple',coalesce(content,''),plainto_tsquery('simple',$1),"
-                "  'MaxWords=30,MinWords=15,StartSel=<b>,StopSel=</b>') AS snippet,"
+                "ts_headline('simple',left(coalesce(description,''),500)||' '||left(coalesce(content,''),1000),plainto_tsquery('simple',$1),"
+                "  'MaxWords=20,MinWords=10,StartSel=<b>,StopSel=</b>') AS snippet,"
                 "language,page_type,"
                 // ── Combined relevance score ──────────────────────────────────
                 "("
-                // FTS rank (highest weight — exact token match)
+                // FTS rank — title+description only (NOT content: content is 80KB, too slow to recompute)
                 " COALESCE(ts_rank(to_tsvector('simple',"
-                "   coalesce(title,'')||' '||coalesce(description,'')||' '||coalesce(content,'')),"
+                "   coalesce(title,'')||' '||coalesce(description,'')),"
                 "   plainto_tsquery('simple',$1)),0) * 3.0"
                 // Trigram similarity on title (pg_trgm — catches "muyleang"~"muyleanging")
                 "+ CASE WHEN title % $1 THEN 1.2 ELSE 0.0 END"
@@ -754,6 +756,7 @@ public:
 
     // ── /ai/answer — LLM answer box via local Ollama ──
     Res aiAnswer(const Req& req) {
+        if (!cfg.aiEnabled) return {503, R"({"error":"AI is disabled"})"};
         std::string q = param(req, "q");
         if (q.empty()) return {400, R"({"error":"missing q"})"};
 
@@ -1490,7 +1493,7 @@ int main() {
     bind(sfd,(sockaddr*)&addr,sizeof(addr)); listen(sfd,256);
     std::cout<<"AngkorSearch API v2.2 on port "<<cfg.apiPort<<"\n";
     std::cout<<"Endpoints: /health /live /search /suggest /stats /admin/stats /admin/seeds /admin/queue /ai/answer\n";
-    std::cout<<"Ollama: "<<cfg.ollamaHost<<" model="<<cfg.ollamaModel<<"\n";
+    std::cout<<"AI enabled: "<<(cfg.aiEnabled?"yes (Ollama: "+cfg.ollamaHost+" model="+cfg.ollamaModel+")\n":"no\n");
     while(true){
         int cfd=accept(sfd,nullptr,nullptr); if(cfd<0) continue;
         std::thread([cfd,&api](){handleClient(cfd,api);}).detach();

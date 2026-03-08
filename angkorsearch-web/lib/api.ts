@@ -7,7 +7,7 @@ import { API_URL, USER_ID } from './constants'
 
 export const http = axios.create({
   baseURL: API_URL,
-  timeout: 15_000,
+  timeout: 60_000,
 })
 
 // ─── Search ───────────────────────────────────────────────────────────────────

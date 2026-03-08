@@ -29,7 +29,7 @@ type DiscoveryLine = { id: number; type: string; msg: string; url?: string; titl
 
 function WebDiscovery({ query, onRefresh }: { query: string; onRefresh: () => void }) {
   const [lines,   setLines]   = useState<DiscoveryLine[]>([])
-  const [status,  setStatus]  = useState<'running' | 'found' | 'none' | 'broad'>('running')
+  const [status,  setStatus]  = useState<'running' | 'found' | 'none' | 'broad' | 'offline'>('running')
   const [count,   setCount]   = useState(0)
   const [pages,   setPages]   = useState<Array<{ url: string; title: string }>>([])
   const abortRef  = useRef<AbortController | null>(null)
@@ -84,7 +84,12 @@ function WebDiscovery({ query, onRefresh }: { query: string; onRefresh: () => vo
           }
         }
       } catch (e: unknown) {
-        if ((e as Error)?.name !== 'AbortError') setStatus('none')
+        if ((e as Error)?.name === 'AbortError') return
+        if (!navigator.onLine || (e as Error)?.name === 'TypeError') {
+          setStatus('offline')
+        } else {
+          setStatus('none')
+        }
       }
     })()
 
@@ -109,13 +114,15 @@ function WebDiscovery({ query, onRefresh }: { query: string; onRefresh: () => vo
     <div className="max-w-2xl space-y-4 py-4">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-full bg-blue/10 border border-blue/20 flex items-center justify-center flex-shrink-0">
+        <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${status === 'offline' ? 'bg-red/10 border border-red/20' : 'bg-blue/10 border border-blue/20'}`}>
           {status === 'running' ? (
             <span className="flex gap-0.5">
               {[0,1,2].map(i => <span key={i} className="w-1.5 h-1.5 rounded-full bg-blue animate-pulse" style={{ animationDelay: `${i*0.2}s` }} />)}
             </span>
           ) : status === 'found' ? (
             <svg className="w-4 h-4 text-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7"/></svg>
+          ) : status === 'offline' ? (
+            <svg className="w-4 h-4 text-red" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636a9 9 0 010 12.728M15.536 8.464a5 5 0 010 7.072M3 3l18 18M9.88 9.88A3 3 0 0012 15a3 3 0 002.12-.88"/></svg>
           ) : (
             <svg className="w-4 h-4 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
           )}
@@ -126,12 +133,14 @@ function WebDiscovery({ query, onRefresh }: { query: string; onRefresh: () => vo
             {status === 'found'   && <>{count} page{count !== 1 ? 's' : ''} discovered — loading results…</>}
             {status === 'none'    && <>No public pages found for &ldquo;{query}&rdquo;</>}
             {status === 'broad'   && <>Query too broad for auto-discovery</>}
+            {status === 'offline' && <span className="text-red">No internet connection</span>}
           </p>
           <p className="text-muted text-xs mt-0.5">
             {status === 'running' && 'Scanning GitHub, GitLab, 20 TLDs, npm, PyPI, dev.to, Medium, Vercel, Netlify…'}
             {status === 'found'   && 'Pages indexed and added to search results'}
             {status === 'none'    && 'The site may require login or JavaScript to render'}
             {status === 'broad'   && 'Try a name or username instead'}
+            {status === 'offline' && 'Please check your Wi-Fi or mobile data and try again'}
           </p>
         </div>
       </div>
@@ -195,6 +204,16 @@ function WebDiscovery({ query, onRefresh }: { query: string; onRefresh: () => vo
             </a>
           ))}
         </div>
+      )}
+
+      {/* Offline retry */}
+      {status === 'offline' && (
+        <button
+          onClick={() => { setStatus('running'); setLines([]); }}
+          className="text-xs text-blue border border-blue/30 px-4 py-1.5 rounded-full hover:bg-blue/10 transition-colors"
+        >
+          Retry when connected
+        </button>
       )}
 
       {/* Tips when nothing found */}
@@ -556,8 +575,9 @@ function MediaGrid({
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function SearchResults({ query, tab, page, lang, onResults }: Props) {
   const router = useRouter()
-  const { results, loading, error, aiAnswer, aiModel, aiLoading, search } = useSearch()
+  const { results, loading, retrying, error, aiAnswer, aiModel, aiLoading, search } = useSearch()
   const { bookmarks, history, loadBookmarks, loadHistory, deleteHistory } = useBookmark()
+  const [aiEnabled, setAiEnabled] = useState(false)
 
   useEffect(() => {
     if (!query) return
@@ -566,8 +586,8 @@ export default function SearchResults({ query, tab, page, lang, onResults }: Pro
     // image/video use their own MediaGrid state — skip useSearch for them
     if (tab === 'image' || tab === 'video') return
     // AI tab searches as 'web' type — shows crawled pages from AI tool domains
-    search(query, tab === 'ai' ? 'all' : tab, page, lang)
-  }, [query, tab, page, lang])
+    search(query, tab === 'ai' ? 'all' : tab, page, lang, aiEnabled)
+  }, [query, tab, page, lang, aiEnabled])
 
   useEffect(() => {
     if (!loading && results.length > 0) onResults?.(results)
@@ -632,24 +652,53 @@ export default function SearchResults({ query, tab, page, lang, onResults }: Pro
   }
 
   // ── Loading ──
-  if (loading) return <Skeleton />
+  if (loading) return (
+    <div>
+      <Skeleton />
+      {retrying && (
+        <p className="text-muted text-xs text-center mt-4 animate-pulse">
+          Taking longer than usual, please wait…
+        </p>
+      )}
+    </div>
+  )
 
   // ── Error ──
   if (error) return (
-    <div className="py-10 text-center">
+    <div className="py-10 text-center space-y-3">
       <p className="text-red text-sm">{error}</p>
+      <button
+        onClick={() => search(query, tab === 'ai' ? 'all' : tab as TabId, page, lang, aiEnabled)}
+        className="text-xs text-blue border border-blue/30 px-4 py-1.5 rounded-full hover:bg-blue/10 transition-colors"
+      >
+        Try again
+      </button>
     </div>
   )
 
   // ── No results → auto web discovery ──
   if (!results.length) return (
-    <WebDiscovery query={query} onRefresh={() => search(query, tab, page, lang)} />
+    <WebDiscovery query={query} onRefresh={() => search(query, tab, page, lang, aiEnabled)} />
   )
 
   // ── All / Web ──
   if (tab === 'all') {
     return (
       <div>
+        {/* AI toggle */}
+        <div className="flex items-center gap-2 mb-3">
+          <button
+            onClick={() => setAiEnabled(e => !e)}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${aiEnabled ? 'bg-blue' : 'bg-border'}`}
+            aria-pressed={aiEnabled}
+            title={aiEnabled ? 'Disable AI Overview' : 'Enable AI Overview'}
+          >
+            <span
+              className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm ring-0 transition-transform ${aiEnabled ? 'translate-x-4' : 'translate-x-0'}`}
+            />
+          </button>
+          <span className="text-xs text-muted">AI Overview {aiEnabled ? <span className="text-blue">On</span> : <span>Off</span>}</span>
+        </div>
         <AIOverview answer={aiAnswer} model={aiModel} loading={aiLoading} />
         <p className="text-muted text-xs mb-4">About {results.length.toLocaleString()} results</p>
         {results.length < 4 && <RelatedProfiles query={query} />}

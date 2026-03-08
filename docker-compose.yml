@@ -19,6 +19,29 @@ services:
     image: postgres:16-alpine
     container_name: angkor_postgres
     restart: unless-stopped
+    shm_size: '512m'
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=2GB
+      - -c
+      - work_mem=32MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - autovacuum=on
+      - -c
+      - autovacuum_vacuum_scale_factor=0.05
+      - -c
+      - autovacuum_analyze_scale_factor=0.02
+      - -c
+      - wal_buffers=16MB
+      - -c
+      - checkpoint_completion_target=0.9
     environment:
       POSTGRES_DB:       angkorsearch
       POSTGRES_USER:     angkor
@@ -57,50 +80,49 @@ services:
       retries: 5
 
   # ─────────────────────────────────────────
-  # Ollama — local LLM server
-  # Default model: qwen2.5:3b (~2GB, multilingual, supports Khmer)
-  # To use GPU: uncomment the deploy section below
+  # Ollama — local LLM server (DISABLED by default)
+  # To enable: uncomment this block, set AI_ENABLED=true in api service,
+  # and add `depends_on: ollama: condition: service_healthy` to api.
   # ─────────────────────────────────────────
-  ollama:
-    image: ollama/ollama
-    container_name: angkor_ollama
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - ./storage/ollama:/root/.ollama
-    environment:
-      OLLAMA_KEEP_ALIVE: "24h"
-    networks:
-      - angkor_net
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
-    # Uncomment to enable NVIDIA GPU acceleration:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+  # ollama:
+  #   image: ollama/ollama
+  #   container_name: angkor_ollama
+  #   restart: unless-stopped
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ./storage/ollama:/root/.ollama
+  #   environment:
+  #     OLLAMA_KEEP_ALIVE: "24h"
+  #   networks:
+  #     - angkor_net
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+  #     interval: 15s
+  #     timeout: 10s
+  #     retries: 10
+  #     start_period: 30s
+  #   # Uncomment to enable NVIDIA GPU acceleration:
+  #   # deploy:
+  #   #   resources:
+  #   #     reservations:
+  #   #       devices:
+  #   #         - driver: nvidia
+  #   #           count: 1
+  #   #           capabilities: [gpu]
 
-  # Auto-pulls the LLM model when Ollama first starts
-  ollama-init:
-    image: ollama/ollama
-    container_name: angkor_ollama_init
-    restart: "no"
-    depends_on:
-      ollama:
-        condition: service_healthy
-    environment:
-      OLLAMA_HOST: http://ollama:11434
-    entrypoint: ["/bin/sh", "-c", "ollama pull qwen2.5:3b && echo 'Model ready!'"]
-    networks:
-      - angkor_net
+  # ollama-init:
+  #   image: ollama/ollama
+  #   container_name: angkor_ollama_init
+  #   restart: "no"
+  #   depends_on:
+  #     ollama:
+  #       condition: service_healthy
+  #   environment:
+  #     OLLAMA_HOST: http://ollama:11434
+  #   entrypoint: ["/bin/sh", "-c", "ollama pull qwen2.5:3b && echo 'Model ready!'"]
+  #   networks:
+  #     - angkor_net
 
   # ─────────────────────────────────────────
   # Crawler Node 1 — seeds queue + crawls
@@ -293,6 +315,7 @@ services:
       REDIS_HOST:    redis
       REDIS_PORT:    6379
       API_PORT:      8080
+      AI_ENABLED:    "false"
       OLLAMA_HOST:   http://ollama:11434
       OLLAMA_MODEL:  qwen2.5:3b
     volumes:

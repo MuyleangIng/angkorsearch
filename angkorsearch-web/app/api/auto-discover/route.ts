@@ -21,12 +21,9 @@ function guessUrls(query: string): string[] {
     .filter(w => /^[a-z0-9-]+$/.test(w) && w.length >= 2)
   if (words.length === 0 || words.length > 4) return []
 
-  const skip = [
-    'news','video','image','photo','search','what','how','why','when',
-    'where','the','and','for','cambodia','khmer','latest','best','top',
-    'about','help','contact','support','free','download','page','site',
-  ]
-  if (words.some(w => skip.includes(w))) return []
+  // Only skip pure grammar/filler words — never skip topic words like 'khmer', 'cambodia'
+  const grammarOnly = ['what','how','why','when','where','the','and','for','is','are','was','a','an']
+  if (words.every(w => grammarOnly.includes(w))) return []
 
   // ── Name variants ────────────────────────────────────────────────────────────
   const rev     = [...words].reverse()
